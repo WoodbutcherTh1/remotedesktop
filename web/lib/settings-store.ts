@@ -136,11 +136,7 @@ export function loadSettings(): RemoteSettings {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
       const defaults = { ...DEFAULT_SETTINGS };
-      if (isMobileViewport()) {
-        defaults.display = { ...defaults.display, scaleMode: 'stretch' };
-      } else {
-        defaults.display = { ...defaults.display, scaleMode: 'fit' };
-      }
+      defaults.display = { ...defaults.display, scaleMode: 'stretch' };
       return defaults;
     }
     const parsed = JSON.parse(raw) as Partial<RemoteSettings>;
@@ -148,9 +144,7 @@ export function loadSettings(): RemoteSettings {
       DEFAULT_SETTINGS as unknown as Record<string, unknown>,
       parsed as Record<string, unknown>,
     ) as unknown as RemoteSettings;
-    if (isMobileViewport()) {
-      merged.display = { ...merged.display, scaleMode: 'stretch' };
-    }
+    merged.display = { ...merged.display, scaleMode: 'stretch' };
     return merged;
   } catch {
     return DEFAULT_SETTINGS;

@@ -55,22 +55,14 @@ export default function RemoteCanvas({
     offsetY: 0,
   });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const scaleMode = settings.display.scaleMode;
+  const scaleMode = 'stretch' as const;
 
   useEffect(() => {
     onCanvasMount?.();
   }, [onCanvasMount]);
 
   useEffect(() => {
-    if (isMobileViewport()) {
-      setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
-    }
-  }, []);
-
-  useEffect(() => {
-    if (connected) {
-      setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
-    }
+    setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
   }, [connected]);
 
   useEffect(() => {
@@ -97,17 +89,7 @@ export default function RemoteCanvas({
       containerHeight: containerSize.height,
       scaleMode,
     };
-  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height, scaleMode]);
-
-  useEffect(() => {
-    if (
-      scaleMode === 'fit' &&
-      viewTransform.scale <= 1 &&
-      (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)
-    ) {
-      setViewTransform((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }));
-    }
-  }, [scaleMode, viewTransform.scale, viewTransform.offsetX, viewTransform.offsetY]);
+  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
 
   const handleViewTransformChange = useCallback(
     (next: ViewTransform) => {
@@ -127,7 +109,7 @@ export default function RemoteCanvas({
       );
       setViewTransform({ scale: next.scale, ...clamped });
     },
-    [containerSize.height, containerSize.width, remoteHeight, remoteWidth, scaleMode],
+    [containerSize.height, containerSize.width, remoteHeight, remoteWidth],
   );
 
   const {
@@ -171,20 +153,14 @@ export default function RemoteCanvas({
         )
       : null;
 
+  const clientViewport = containerSize;
+
   return (
     <>
       <canvas
         id="display"
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
         style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          display: 'block',
-          touchAction: 'none',
-          background: '#0A0A0F',
-          maxWidth: 'none',
-          maxHeight: 'none',
           cursor: settings.mouse.showLocalCursor
             ? cursorStyleMap[settings.mouse.cursorStyle]
             : 'none',
@@ -199,7 +175,7 @@ export default function RemoteCanvas({
 
       {settings.mouse.showRemoteCursor && cursorScreenPos && (
         <div
-          className="absolute pointer-events-none z-10"
+          className="fixed pointer-events-none z-10"
           style={{
             left: `${cursorScreenPos.x}px`,
             top: `${cursorScreenPos.y}px`,
@@ -220,7 +196,7 @@ export default function RemoteCanvas({
       )}
 
       {connected && !hasReceivedFrame && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none bg-[#0A0A0F]">
+        <div className="fixed inset-0 z-20 flex items-center justify-center pointer-events-none bg-[#0A0A0F]">
           <p className="text-sm text-zinc-400">Waiting for screen...</p>
         </div>
       )}
@@ -238,26 +214,27 @@ export default function RemoteCanvas({
         scaleMode={scaleMode}
       />
 
-      <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
+      <div className="md:hidden fixed top-2 right-2 z-50 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
+        <span className="text-zinc-500">fill-v2 · </span>
         <span className={latencyColorClass(latency)}>{latency}ms</span>
         <span className="text-zinc-500"> · </span>
         <span className="text-zinc-300">{fps} FPS</span>
         <span className="text-zinc-500"> · #{frameCount}</span>
-        {scale !== 1 && (
-          <>
-            <span className="text-zinc-500"> · </span>
-            <span className="text-zinc-300">{Math.round(scale * 100)}%</span>
-          </>
-        )}
+        <span className="text-zinc-500"> · </span>
+        <span className="text-zinc-400">
+          {clientViewport.width}×{clientViewport.height}
+        </span>
       </div>
 
       {showStats && (
-        <div className="absolute top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5 z-30 pointer-events-none">
+        <div className="fixed top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5 z-50 pointer-events-none">
+          <div>fill-v2</div>
           <div>Frames: {frameCount}</div>
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
-          <div>Resolution: {remoteWidth}×{remoteHeight}</div>
-          <div>Scale: {scaleMode}</div>
+          <div>Remote: {remoteWidth}×{remoteHeight}</div>
+          <div>Client: {clientViewport.width}×{clientViewport.height}</div>
+          <div>Scale: stretch</div>
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
           <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>

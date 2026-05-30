@@ -21,7 +21,6 @@ import { ViewState } from '@/lib/view-transform';
 export default function DesktopPage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
   const viewStateRef = useRef<ViewState>({
     scale: 1,
     offsetX: 0,
@@ -72,12 +71,12 @@ export default function DesktopPage() {
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,
-  } = useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
+  } = useFrameRenderer(canvasRef, settings, status === 'connected');
   renderFrameRef.current = renderFrame;
 
   useEffect(() => {
     if (!loaded) return;
-    if (isMobileViewport() && settings.display.scaleMode !== 'stretch') {
+    if (settings.display.scaleMode !== 'stretch') {
       updateSection('display', { scaleMode: 'stretch' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -105,10 +104,10 @@ export default function DesktopPage() {
         offsetY: 0,
         containerWidth: viewStateRef.current.containerWidth,
         containerHeight: viewStateRef.current.containerHeight,
-        scaleMode: isMobileViewport() ? 'stretch' : settings.display.scaleMode,
+        scaleMode: 'stretch',
       };
     }
-  }, [status, settings.display.scaleMode]);
+  }, [status]);
 
   useEffect(() => {
     if (!settings.advanced.clipboardSync) return;
@@ -159,8 +158,9 @@ export default function DesktopPage() {
   }, [settings.display.scaleMode, updateSection]);
 
   const handleFullscreen = useCallback(() => {
+    const canvas = canvasRef.current;
     if (!document.fullscreenElement) {
-      containerRef.current?.requestFullscreen();
+      canvas?.requestFullscreen?.() ?? document.documentElement.requestFullscreen();
     } else {
       document.exitFullscreen();
     }
@@ -177,30 +177,14 @@ export default function DesktopPage() {
 
   if (!loaded || !token) {
     return (
-      <div className="h-screen bg-background flex items-center justify-center">
+      <div className="fixed inset-0 bg-[#0A0A0F] flex items-center justify-center">
         <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
       </div>
     );
   }
 
   return (
-    <div
-      id="rd-viewport"
-      ref={containerRef}
-      style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        width: '100vw',
-        height: '100dvh',
-        background: '#0A0A0F',
-        overflow: 'hidden',
-        margin: 0,
-        padding: 0,
-      }}
-    >
+    <>
       <RemoteCanvas
         canvasRef={canvasRef}
         viewStateRef={viewStateRef}
@@ -217,7 +201,7 @@ export default function DesktopPage() {
         onCanvasMount={initializeDisplayCanvas}
       />
 
-      <div className="hidden md:block relative z-10">
+      <div className="hidden md:block fixed top-0 left-0 right-0 z-50">
         <TopBar
           status={status}
           latency={latency}
@@ -236,7 +220,7 @@ export default function DesktopPage() {
       </div>
 
       {settings.keyboard.showSpecialKeysToolbar && (
-        <div className="hidden md:block relative z-10 border-b border-white/5">
+        <div className="hidden md:block fixed top-12 left-0 right-0 z-50 border-b border-white/5">
           <KeyboardShortcutBar onShortcut={sendKeyCombo} visible />
         </div>
       )}
@@ -275,6 +259,6 @@ export default function DesktopPage() {
         attempt={reconnectAttempt}
         maxAttempts={settings.advanced.reconnectAttempts}
       />
-    </div>
+    </>
   );
 }

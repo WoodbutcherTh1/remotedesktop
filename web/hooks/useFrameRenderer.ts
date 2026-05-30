@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
-import { ColorMode, isMobileViewport, RemoteSettings } from '@/lib/settings-store';
-import { VIEW_BACKGROUND, ViewState } from '@/lib/view-transform';
+import { resizeDisplayCanvas } from '@/lib/client-viewport';
+import { ColorMode, RemoteSettings } from '@/lib/settings-store';
+import { VIEW_BACKGROUND } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
@@ -11,12 +12,6 @@ interface FrameRendererState {
   fps: number;
   frameCount: number;
   lastFrameTime: number;
-}
-
-interface DisplayViewport {
-  cssW: number;
-  cssH: number;
-  dpr: number;
 }
 
 async function decodeJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
@@ -90,68 +85,29 @@ function applyHighQualitySmoothing(
   ctx.imageSmoothingQuality = 'high';
 }
 
-function syncCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
-  const layoutW = window.innerWidth;
-  const layoutH = window.innerHeight;
-  const vpW = window.visualViewport?.width ?? layoutW;
-  const vpH = window.visualViewport?.height ?? layoutH;
-  const vw = Math.max(isMobileViewport() ? Math.max(vpW, layoutW) : vpW, 1);
-  const vh = Math.max(isMobileViewport() ? Math.max(vpH, layoutH) : vpH, 1);
-  const dpr = window.devicePixelRatio || 1;
-
-  canvas.style.width = `${vw}px`;
-  canvas.style.height = `${vh}px`;
-  canvas.style.position = 'absolute';
-  canvas.style.top = '0';
-  canvas.style.left = '0';
-  canvas.style.display = 'block';
-  canvas.style.backgroundColor = VIEW_BACKGROUND;
-  canvas.style.touchAction = 'none';
-
-  const bw = Math.round(vw * dpr);
-  const bh = Math.round(vh * dpr);
-  if (canvas.width !== bw || canvas.height !== bh) {
-    canvas.width = bw;
-    canvas.height = bh;
-  }
-
-  return { cssW: vw, cssH: vh, dpr };
-}
-
-function paintStretchFrame(
+function drawFrame(
   ctx: CanvasRenderingContext2D,
-  offscreen: CanvasBuffer,
+  offscreen: CanvasBuffer | null,
   remoteW: number,
   remoteH: number,
-  vw: number,
-  vh: number,
+  clientW: number,
+  clientH: number,
+  dpr: number,
 ): void {
-  applyHighQualitySmoothing(ctx);
-  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, vw, vh);
-}
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = VIEW_BACKGROUND;
+  ctx.fillRect(0, 0, clientW, clientH);
 
-function paintCoverFrame(
-  ctx: CanvasRenderingContext2D,
-  offscreen: CanvasBuffer,
-  remoteW: number,
-  remoteH: number,
-  vw: number,
-  vh: number,
-): void {
-  const scale = Math.max(vw / remoteW, vh / remoteH);
-  const dw = remoteW * scale;
-  const dh = remoteH * scale;
-  const x = (vw - dw) / 2;
-  const y = (vh - dh) / 2;
+  if (!offscreen || remoteW <= 0 || remoteH <= 0) return;
+
   applyHighQualitySmoothing(ctx);
-  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, x, y, dw, dh);
+  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, clientW, clientH);
 }
 
 export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
   connected: boolean,
-  viewStateRef: React.MutableRefObject<ViewState>,
 ) {
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
@@ -180,17 +136,8 @@ export function useFrameRenderer(
       displayCtxRef.current = null;
       offscreenRef.current = null;
       offscreenCtxRef.current = null;
-    } else if (isMobileViewport()) {
-      viewStateRef.current = {
-        scale: 1,
-        offsetX: 0,
-        offsetY: 0,
-        containerWidth: viewStateRef.current.containerWidth,
-        containerHeight: viewStateRef.current.containerHeight,
-        scaleMode: 'stretch',
-      };
     }
-  }, [connected, viewStateRef]);
+  }, [connected]);
 
   const applyColorMode = useCallback((ctx: CanvasRenderingContext2D, mode: ColorMode) => {
     if (mode === 'grayscale') {
@@ -206,7 +153,7 @@ export function useFrameRenderer(
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const { cssW, cssH, dpr } = syncCanvasSize(canvas);
+    const { width: clientW, height: clientH, dpr } = resizeDisplayCanvas(canvas);
 
     let ctx = displayCtxRef.current;
     if (!ctx) {
@@ -219,22 +166,14 @@ export function useFrameRenderer(
     if (!ctx) return;
 
     try {
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, cssW, cssH);
-
       const offscreen = offscreenRef.current;
       const remoteW = offscreen?.width ?? 0;
       const remoteH = offscreen?.height ?? 0;
 
       if (offscreen && remoteW > 0 && remoteH > 0) {
         applyColorMode(ctx, settingsRef.current.display.colorMode);
-        if (isMobileViewport()) {
-          paintStretchFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
-        } else {
-          paintCoverFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
-        }
       }
+      drawFrame(ctx, offscreen, remoteW, remoteH, clientW, clientH, dpr);
     } catch {
       // keep last painted display frame
     }

@@ -95,16 +95,21 @@ select {
   border-bottom: 2px solid #7c3aed;
 }
 
-#display {
-  margin: 0;
-  padding: 0;
-  border: none;
-  max-width: none;
-  max-height: none;
+/* Override Tailwind preflight: canvas { max-width: 100%; height: auto } */
+canvas#display {
+  margin: 0 !important;
+  padding: 0 !important;
+  border: none !important;
+  max-width: none !important;
+  max-height: none !important;
   image-rendering: auto;
   transition: none !important;
   animation: none !important;
   transform: none !important;
   object-fit: unset !important;
   touch-action: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1;
 }

@@ -27,17 +27,12 @@ export interface DestRect {
   totalScale: number;
 }
 
+import { getClientViewport } from './client-viewport';
+
 /** CSS pixel viewport size (visualViewport on iOS Safari). */
 export function getVisualViewportCssSize(): { width: number; height: number } {
-  if (typeof window === 'undefined') {
-    return { width: 0, height: 0 };
-  }
-  const vw = window.visualViewport?.width ?? window.innerWidth;
-  const vh = window.visualViewport?.height ?? window.innerHeight;
-  return {
-    width: vw,
-    height: vh,
-  };
+  const { width, height } = getClientViewport();
+  return { width, height };
 }
 
 export function computeBaseScale(
