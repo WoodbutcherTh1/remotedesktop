@@ -2,13 +2,13 @@
 """RemoteDesk desktop agent — cross-platform screen capture and input relay."""
 
 import asyncio
-import base64
-import hashlib
 import io
 import json
 import logging
 import os
+import struct
 import sys
+import threading
 import time
 from typing import Any
 
@@ -24,18 +24,13 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [agent] %(message)s')
 log = logging.getLogger(__name__)
 
-RELAY_URL = os.getenv('RELAY_URL', 'ws://localhost:8080')
-SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'dev-token-change-me')
-
-CAPTURE_INTERVAL = 0.1
-FULL_FRAME_INTERVAL = 2.0
+RELAY_URL = os.getenv('RELAY_URL', 'wss://remotedesktop-production-fd00.up.railway.app')
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'test1234')
+CAPTURE_INTERVAL = 0.05
 PING_INTERVAL = 5.0
-BLOCK_SIZE = 32
-DEFAULT_QUALITY = 75
-MIN_QUALITY = 50
-MAX_QUALITY = 85
-LATENCY_HIGH_MS = 200
-LATENCY_LOW_MS = 100
+JPEG_QUALITY = 95
+FRAME_MAGIC = 0xFD
+FRAME_QUEUE_MAX = 30
 
 mouse = MouseController()
 keyboard = KeyboardController()
@@ -47,7 +42,7 @@ KEY_MAP = {
     'left': Key.left, 'right': Key.right,
     'home': Key.home, 'end': Key.end,
     'pageup': Key.page_up, 'pagedown': Key.page_down,
-    'insert': Key.insert, 'caps_lock': Key.caps_lock,
+    'caps_lock': Key.caps_lock,
     'f1': Key.f1, 'f2': Key.f2, 'f3': Key.f3, 'f4': Key.f4,
     'f5': Key.f5, 'f6': Key.f6, 'f7': Key.f7, 'f8': Key.f8,
     'f9': Key.f9, 'f10': Key.f10, 'f11': Key.f11, 'f12': Key.f12,
@@ -57,135 +52,133 @@ KEY_MAP = {
 }
 
 
+def _mac_display_scale() -> float:
+    if sys.platform != 'darwin':
+        return 1.0
+    try:
+        import ctypes
+        import ctypes.util
+
+        lib_path = ctypes.util.find_library('CoreGraphics')
+        if not lib_path:
+            return 1.0
+        cg = ctypes.CDLL(lib_path)
+        cg.CGMainDisplayID.restype = ctypes.c_uint32
+        cg.CGDisplayCopyDisplayMode.argtypes = [ctypes.c_uint32]
+        cg.CGDisplayCopyDisplayMode.restype = ctypes.c_void_p
+        cg.CGDisplayModeGetWidth.argtypes = [ctypes.c_void_p]
+        cg.CGDisplayModeGetWidth.restype = ctypes.c_size_t
+        cg.CGDisplayModeGetPixelWidth.argtypes = [ctypes.c_void_p]
+        cg.CGDisplayModeGetPixelWidth.restype = ctypes.c_size_t
+        cg.CGDisplayModeRelease.argtypes = [ctypes.c_void_p]
+
+        display_id = cg.CGMainDisplayID()
+        mode = cg.CGDisplayCopyDisplayMode(display_id)
+        if not mode:
+            return 1.0
+        try:
+            logical_w = cg.CGDisplayModeGetWidth(mode)
+            pixel_w = cg.CGDisplayModeGetPixelWidth(mode)
+            if logical_w <= 0:
+                return 1.0
+            return max(1.0, pixel_w / logical_w)
+        finally:
+            cg.CGDisplayModeRelease(mode)
+    except Exception:
+        return 1.0
+
+
 class ScreenCapture:
     def __init__(self) -> None:
         self.sct = mss()
-        self.monitor = self.sct.monitors[1]
-        self.prev_hash: str | None = None
-        self.prev_image: Image.Image | None = None
-        self.last_full_frame = 0.0
-        self.quality = DEFAULT_QUALITY
-        self.latency_ms = 0.0
+        self.monitor = dict(self.sct.monitors[1])
+        self.capture_width = self.monitor['width']
+        self.capture_height = self.monitor['height']
+        self._configure_native_resolution()
+
+    def _configure_native_resolution(self) -> None:
+        scale = _mac_display_scale()
+        if scale <= 1.0:
+            return
+
+        expected_w = int(round(self.monitor['width'] * scale))
+        expected_h = int(round(self.monitor['height'] * scale))
+        try:
+            shot = self.sct.grab(self.monitor)
+        except Exception:
+            return
+
+        if shot.width >= expected_w * 0.9 and shot.height >= expected_h * 0.9:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
+            log.info(
+                'Using native capture resolution %dx%d (scale %.1fx)',
+                shot.width,
+                shot.height,
+                scale,
+            )
+            return
+
+        native_monitor = {
+            'left': self.monitor['left'],
+            'top': self.monitor['top'],
+            'width': expected_w,
+            'height': expected_h,
+        }
+        try:
+            native_shot = self.sct.grab(native_monitor)
+        except Exception:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
+            return
+
+        if native_shot.width >= shot.width and native_shot.height >= shot.height:
+            self.monitor = native_monitor
+            self.capture_width = native_shot.width
+            self.capture_height = native_shot.height
+            log.info(
+                'Configured native capture resolution %dx%d (scale %.1fx)',
+                native_shot.width,
+                native_shot.height,
+                scale,
+            )
+        else:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
 
     @property
     def width(self) -> int:
-        return self.monitor['width']
+        return self.capture_width
 
     @property
     def height(self) -> int:
-        return self.monitor['height']
+        return self.capture_height
 
     def capture_raw(self) -> Image.Image:
         shot = self.sct.grab(self.monitor)
+        self.capture_width = shot.width
+        self.capture_height = shot.height
         return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
 
-    def frame_hash(self, img: Image.Image) -> str:
-        return hashlib.md5(img.tobytes()).hexdigest()
-
-    def find_dirty_rects(self, prev: Image.Image, curr: Image.Image) -> list[tuple[int, int, int, int]]:
-        w, h = curr.size
-        rects: list[tuple[int, int, int, int]] = []
-        for y in range(0, h, BLOCK_SIZE):
-            for x in range(0, w, BLOCK_SIZE):
-                bw = min(BLOCK_SIZE, w - x)
-                bh = min(BLOCK_SIZE, h - y)
-                prev_block = prev.crop((x, y, x + bw, y + bh))
-                curr_block = curr.crop((x, y, x + bw, y + bh))
-                if prev_block.tobytes() != curr_block.tobytes():
-                    rects.append((x, y, bw, bh))
-        return self._merge_rects(rects)
-
-    def _merge_rects(self, rects: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
-        if not rects:
-            return []
-        merged: list[tuple[int, int, int, int]] = []
-        for rect in rects:
-            rx, ry, rw, rh = rect
-            found = False
-            for i, (mx, my, mw, mh) in enumerate(merged):
-                if not (rx + rw < mx or rx > mx + mw or ry + rh < my or ry > my + mh):
-                    nx = min(mx, rx)
-                    ny = min(my, ry)
-                    nw = max(mx + mw, rx + rw) - nx
-                    nh = max(my + mh, ry + rh) - ny
-                    merged[i] = (nx, ny, nw, nh)
-                    found = True
-                    break
-            if not found:
-                merged.append(rect)
-        return merged
-
-    def encode_jpeg(self, img: Image.Image, quality: int | None = None) -> str:
-        q = quality if quality is not None else self.quality
+    def encode_jpeg_bytes(self, img: Image.Image) -> bytes:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=q, optimize=True)
-        return base64.b64encode(buf.getvalue()).decode('ascii')
+        img.save(buf, format='JPEG', quality=JPEG_QUALITY, optimize=True)
+        return buf.getvalue()
 
-    def adjust_quality(self) -> None:
-        if self.latency_ms > LATENCY_HIGH_MS:
-            self.quality = MIN_QUALITY
-        elif self.latency_ms < LATENCY_LOW_MS:
-            self.quality = MAX_QUALITY
-        else:
-            self.quality = DEFAULT_QUALITY
+    def build_binary_frame(self, img: Image.Image) -> bytes:
+        timestamp = int(time.time() * 1000) & 0xFFFFFFFF
+        jpeg = self.encode_jpeg_bytes(img)
+        return self._pack_frame(img.width, img.height, timestamp, jpeg)
 
-    def build_frame_message(self, img: Image.Image, force_full: bool = False) -> dict[str, Any] | None:
-        now = time.time()
-        current_hash = self.frame_hash(img)
-
-        if force_full or (now - self.last_full_frame) >= FULL_FRAME_INTERVAL:
-            self.last_full_frame = now
-            self.prev_hash = current_hash
-            self.prev_image = img.copy()
-            return {
-                'type': 'frame',
-                'mode': 'full',
-                'width': img.width,
-                'height': img.height,
-                'rects': [{'x': 0, 'y': 0, 'w': img.width, 'h': img.height,
-                           'data': self.encode_jpeg(img)}],
-                'timestamp': int(now * 1000),
-                'quality': self.quality,
-            }
-
-        if self.prev_hash == current_hash:
-            return None
-
-        if self.prev_image is None:
-            self.prev_hash = current_hash
-            self.prev_image = img.copy()
-            return {
-                'type': 'frame',
-                'mode': 'full',
-                'width': img.width,
-                'height': img.height,
-                'rects': [{'x': 0, 'y': 0, 'w': img.width, 'h': img.height,
-                           'data': self.encode_jpeg(img)}],
-                'timestamp': int(now * 1000),
-                'quality': self.quality,
-            }
-
-        dirty = self.find_dirty_rects(self.prev_image, img)
-        self.prev_hash = current_hash
-        self.prev_image = img.copy()
-
-        if not dirty:
-            return None
-
-        rects = []
-        for x, y, w, h in dirty:
-            patch = img.crop((x, y, x + w, y + h))
-            rects.append({'x': x, 'y': y, 'w': w, 'h': h, 'data': self.encode_jpeg(patch)})
-
-        return {
-            'type': 'frame',
-            'mode': 'dirty',
-            'width': img.width,
-            'height': img.height,
-            'rects': rects,
-            'timestamp': int(now * 1000),
-            'quality': self.quality,
-        }
+    def _pack_frame(self, width: int, height: int, timestamp: int, jpeg: bytes) -> bytes:
+        mode_byte = 0  # full frame only
+        header = struct.pack('>BBIIIH', FRAME_MAGIC, mode_byte, width, height, timestamp, JPEG_QUALITY)
+        header += struct.pack('>H', 1)
+        buf = bytearray(header)
+        buf += struct.pack('>IIII', 0, 0, width, height)
+        buf += struct.pack('>I', len(jpeg))
+        buf += jpeg
+        return bytes(buf)
 
 
 def resolve_key(key: str):
@@ -278,6 +271,31 @@ def execute_command(cmd: dict[str, Any]) -> None:
         log.error('Command error (%s): %s', action, exc)
 
 
+class FrameBridge:
+    """Thread-safe bridge from capture thread to asyncio send loop."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=FRAME_QUEUE_MAX)
+
+    def put_frame(self, data: bytes) -> None:
+        def _enqueue() -> None:
+            if self._queue.full():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                self._queue.put_nowait(data)
+            except asyncio.QueueFull:
+                pass
+
+        self._loop.call_soon_threadsafe(_enqueue)
+
+    async def get_frame(self) -> bytes:
+        return await self._queue.get()
+
+
 class RemoteAgent:
     def __init__(self) -> None:
         self.capture = ScreenCapture()
@@ -285,6 +303,7 @@ class RemoteAgent:
         self.running = True
         self.backoff = 1.0
         self.max_backoff = 30.0
+        self._capture_stop = threading.Event()
 
     async def authenticate(self, ws) -> bool:
         await ws.send(json.dumps({'type': 'auth', 'role': 'agent', 'token': SECRET_TOKEN}))
@@ -299,19 +318,33 @@ class RemoteAgent:
             log.error('Auth timeout')
         return False
 
-    async def capture_loop(self, ws) -> None:
-        while self.running:
+    def _capture_worker(self, bridge: FrameBridge) -> None:
+        while not self._capture_stop.is_set():
+            loop_start = time.time()
             try:
                 img = self.capture.capture_raw()
-                msg = self.capture.build_frame_message(img)
-                if msg:
-                    await ws.send(json.dumps(msg))
+                bridge.put_frame(self.capture.build_binary_frame(img))
+            except Exception as exc:
+                log.error('Capture error: %s', exc)
+            elapsed = time.time() - loop_start
+            sleep_time = max(0.0, CAPTURE_INTERVAL - elapsed)
+            if sleep_time > 0:
+                self._capture_stop.wait(sleep_time)
+
+    async def send_loop(self, ws, bridge: FrameBridge) -> None:
+        while self.running:
+            try:
+                frame = await asyncio.wait_for(bridge.get_frame(), timeout=1.0)
+                await ws.send(frame)
+            except asyncio.TimeoutError:
+                continue
             except websockets.exceptions.ConnectionClosed:
                 break
-            await asyncio.sleep(CAPTURE_INTERVAL)
 
     async def receive_loop(self, ws) -> None:
         async for raw in ws:
+            if isinstance(raw, bytes):
+                continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -319,10 +352,7 @@ class RemoteAgent:
             if msg.get('type') == 'command':
                 execute_command(msg)
             elif msg.get('type') == 'pong':
-                sent = msg.get('timestamp')
-                if sent:
-                    self.capture.latency_ms = max(0, time.time() * 1000 - sent)
-                    self.capture.adjust_quality()
+                pass
             elif msg.get('type') == 'ping':
                 await ws.send(json.dumps({'type': 'pong', 'timestamp': msg.get('timestamp', int(time.time() * 1000))}))
             elif msg.get('type') == 'heartbeat':
@@ -336,14 +366,27 @@ class RemoteAgent:
             self.backoff = 1.0
             self.ws = ws
 
+            loop = asyncio.get_running_loop()
+            bridge = FrameBridge(loop)
+            self._capture_stop.clear()
+            capture_thread = threading.Thread(
+                target=self._capture_worker,
+                args=(bridge,),
+                daemon=True,
+                name='capture',
+            )
+            capture_thread.start()
+
             ping_task = asyncio.create_task(self._ping_loop_safe(ws))
-            capture_task = asyncio.create_task(self.capture_loop(ws))
+            send_task = asyncio.create_task(self.send_loop(ws, bridge))
             receive_task = asyncio.create_task(self.receive_loop(ws))
 
             done, pending = await asyncio.wait(
-                [ping_task, capture_task, receive_task],
+                [ping_task, send_task, receive_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            self._capture_stop.set()
+            capture_thread.join(timeout=2.0)
             for task in pending:
                 task.cancel()
             for task in done:
