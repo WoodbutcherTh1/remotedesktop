@@ -74,12 +74,16 @@ export default function RemoteCanvas({
   }, []);
 
   useEffect(() => {
+    if (canvasRef.current) {
+      canvasRef.current.width = containerSize.width;
+      canvasRef.current.height = containerSize.height;
+    }
     viewStateRef.current = {
       ...viewTransform,
       containerWidth: containerSize.width,
       containerHeight: containerSize.height,
     };
-  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
+  }, [canvasRef, viewStateRef, viewTransform, containerSize.width, containerSize.height]);
 
   useEffect(() => {
     if (viewTransform.scale <= 1 && (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)) {

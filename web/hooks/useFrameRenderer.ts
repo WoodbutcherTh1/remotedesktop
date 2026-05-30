@@ -119,10 +119,9 @@ export function useFrameRenderer(
     const y = (canvas.height - remoteHeight * scale) / 2;
 
     try {
-      ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      applyHighQualitySmoothing(ctx);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
       applyColorMode(ctx, settingsRef.current.display.colorMode);
       ctx.drawImage(
         offscreen as CanvasImageSource,
