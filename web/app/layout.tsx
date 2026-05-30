@@ -20,7 +20,7 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrains.variable}`}>
-      <body className="font-sans antialiased m-0 p-0 overflow-hidden">{children}</body>
+      <body className="font-sans antialiased m-0 p-0 overflow-hidden bg-[#0A0A0F]">{children}</body>
     </html>
   );
 }

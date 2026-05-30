@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
 import {
   clampViewOffset,
+  getVisualViewportCssSize,
   mapRemoteToClient,
   ViewState,
   ViewTransform,
@@ -62,30 +63,27 @@ export default function RemoteCanvas({
   }, [onCanvasMount]);
 
   useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
+    if (connected) {
+      setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
+    }
+  }, [connected]);
 
+  useEffect(() => {
     const readSize = () => {
-      const vv = window.visualViewport;
-      const width = Math.round(vv?.width ?? node.clientWidth ?? window.innerWidth);
-      const height = Math.round(vv?.height ?? node.clientHeight ?? window.innerHeight);
-      setContainerSize({ width, height });
+      setContainerSize(getVisualViewportCssSize());
     };
 
     readSize();
-    const observer = new ResizeObserver(readSize);
-    observer.observe(node);
     window.addEventListener('resize', readSize);
     window.visualViewport?.addEventListener('resize', readSize);
     window.visualViewport?.addEventListener('scroll', readSize);
 
     return () => {
-      observer.disconnect();
       window.removeEventListener('resize', readSize);
       window.visualViewport?.removeEventListener('resize', readSize);
       window.visualViewport?.removeEventListener('scroll', readSize);
     };
-  }, [containerRef]);
+  }, []);
 
   useEffect(() => {
     viewStateRef.current = {
@@ -158,13 +156,29 @@ export default function RemoteCanvas({
 
   return (
     <div
+      id="viewport"
       ref={containerRef}
-      className="remote-canvas-container fixed top-0 left-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F]"
+      className="remote-canvas-container"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        width: '100vw',
+        height: '100dvh',
+        background: '#0A0A0F',
+        overflow: 'hidden',
+        margin: 0,
+        padding: 0,
+      }}
     >
       <canvas
+        id="display"
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-        className="remote-canvas absolute top-0 left-0 w-full h-full border-0 pointer-events-none md:pointer-events-auto"
+        className="remote-canvas"
         style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          display: 'block',
           backgroundColor: '#0A0A0F',
           imageRendering: 'auto',
           cursor: settings.mouse.showLocalCursor

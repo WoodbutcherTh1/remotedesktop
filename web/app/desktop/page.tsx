@@ -83,6 +83,18 @@ export default function DesktopPage() {
   }, [token, relayUrl, loaded]);
 
   useEffect(() => {
+    if (status === 'connected') {
+      viewStateRef.current = {
+        scale: 1,
+        offsetX: 0,
+        offsetY: 0,
+        containerWidth: viewStateRef.current.containerWidth,
+        containerHeight: viewStateRef.current.containerHeight,
+      };
+    }
+  }, [status]);
+
+  useEffect(() => {
     if (!settings.advanced.clipboardSync) return;
 
     const handlePaste = (e: ClipboardEvent) => {

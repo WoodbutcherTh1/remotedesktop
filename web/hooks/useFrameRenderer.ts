@@ -3,7 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { ColorMode, RemoteSettings } from '@/lib/settings-store';
-import { computeFitDestRect, VIEW_BACKGROUND, ViewState } from '@/lib/view-transform';
+import {
+  computeFitDestRect,
+  getVisualViewportCssSize,
+  VIEW_BACKGROUND,
+  ViewState,
+} from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
@@ -13,21 +18,10 @@ interface FrameRendererState {
   lastFrameTime: number;
 }
 
-function getViewportSize(viewState?: ViewState): { width: number; height: number } {
-  if (viewState && viewState.containerWidth > 0 && viewState.containerHeight > 0) {
-    return { width: viewState.containerWidth, height: viewState.containerHeight };
-  }
-
-  if (typeof window === 'undefined') {
-    return { width: 0, height: 0 };
-  }
-
-  const vv = window.visualViewport;
-  if (vv && vv.width > 0 && vv.height > 0) {
-    return { width: Math.round(vv.width), height: Math.round(vv.height) };
-  }
-
-  return { width: window.innerWidth, height: window.innerHeight };
+interface DisplayViewport {
+  cssW: number;
+  cssH: number;
+  dpr: number;
 }
 
 async function decodeJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
@@ -101,18 +95,20 @@ function applyHighQualitySmoothing(
   ctx.imageSmoothingQuality = 'high';
 }
 
-function syncDisplayCanvasSize(
-  canvas: HTMLCanvasElement,
-  viewState?: ViewState,
-): { width: number; height: number } {
-  const viewport = getViewportSize(viewState);
-  const width = Math.max(1, Math.round(viewport.width));
-  const height = Math.max(1, Math.round(viewport.height));
-  if (canvas.width !== width || canvas.height !== height) {
-    canvas.width = width;
-    canvas.height = height;
+function syncDisplayCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
+  const dpr = window.devicePixelRatio || 1;
+  const { width: cssW, height: cssH } = getVisualViewportCssSize();
+  const bufferW = Math.floor(cssW * dpr);
+  const bufferH = Math.floor(cssH * dpr);
+
+  if (canvas.width !== bufferW || canvas.height !== bufferH) {
+    canvas.width = bufferW;
+    canvas.height = bufferH;
   }
-  return { width, height };
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+
+  return { cssW, cssH, dpr };
 }
 
 export function useFrameRenderer(
@@ -164,25 +160,27 @@ export function useFrameRenderer(
     const offscreen = offscreenRef.current;
     if (!canvas || !offscreen || offscreen.width === 0 || offscreen.height === 0) return;
 
-    const viewState = viewStateRef.current;
-    const { width: bufferW, height: bufferH } = syncDisplayCanvasSize(canvas, viewState);
-    if (bufferW <= 0 || bufferH <= 0) return;
+    const { cssW, cssH, dpr } = syncDisplayCanvasSize(canvas);
+    if (cssW <= 0 || cssH <= 0) return;
 
     const ctx = canvas.getContext('2d', {
-      alpha: false,
+      alpha: true,
       desynchronized: settingsRef.current.display.hardwareAcceleration,
     });
     if (!ctx) return;
 
     try {
-      ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, bufferW, bufferH);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
+      ctx.fillStyle = VIEW_BACKGROUND;
+      ctx.fillRect(0, 0, cssW, cssH);
+
+      const viewState = viewStateRef.current;
       const { destX, destY, destW, destH } = computeFitDestRect(
         offscreen.width,
         offscreen.height,
-        bufferW,
-        bufferH,
+        cssW,
+        cssH,
         viewState.scale,
         viewState.offsetX,
         viewState.offsetY,
@@ -208,8 +206,12 @@ export function useFrameRenderer(
     }
   }, [applyColorMode, canvasRef, viewStateRef]);
 
+  const bindViewportResize = useCallback(() => {
+    paintDisplayCanvas();
+  }, [paintDisplayCanvas]);
+
   useEffect(() => {
-    const onResize = () => paintDisplayCanvas();
+    const onResize = () => bindViewportResize();
     window.addEventListener('resize', onResize);
     window.visualViewport?.addEventListener('resize', onResize);
     window.visualViewport?.addEventListener('scroll', onResize);
@@ -218,7 +220,7 @@ export function useFrameRenderer(
       window.visualViewport?.removeEventListener('resize', onResize);
       window.visualViewport?.removeEventListener('scroll', onResize);
     };
-  }, [paintDisplayCanvas]);
+  }, [bindViewportResize]);
 
   useEffect(() => {
     const tick = () => {
@@ -344,19 +346,19 @@ export function useFrameRenderer(
     if (displayInitializedRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: false });
+    const ctx = canvas.getContext('2d', { alpha: true });
     if (!ctx) return;
     try {
-      canvas.style.imageRendering = 'auto';
-      const { width, height } = syncDisplayCanvasSize(canvas, viewStateRef.current);
+      const { cssW, cssH, dpr } = syncDisplayCanvasSize(canvas);
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       applyHighQualitySmoothing(ctx);
       ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, width, height);
+      ctx.fillRect(0, 0, cssW, cssH);
       displayInitializedRef.current = true;
     } catch {
       // ignore
     }
-  }, [canvasRef, viewStateRef]);
+  }, [canvasRef]);
 
   return {
     fps,

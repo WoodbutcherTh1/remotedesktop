@@ -24,6 +24,20 @@ export interface FitDestRect {
   totalScale: number;
 }
 
+/** CSS pixel viewport size (visualViewport on iOS Safari). */
+export function getVisualViewportCssSize(): { width: number; height: number } {
+  if (typeof window === 'undefined') {
+    return { width: 0, height: 0 };
+  }
+  const vv = window.visualViewport;
+  const width = Math.floor(vv?.width ?? window.innerWidth);
+  const height = Math.floor(vv?.height ?? window.innerHeight);
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
+}
+
 export function computeFitScale(
   remoteWidth: number,
   remoteHeight: number,
