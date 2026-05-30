@@ -2,13 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
-import { ColorMode, RemoteSettings } from '@/lib/settings-store';
-import {
-  computeDestRect,
-  getVisualViewportCssSize,
-  VIEW_BACKGROUND,
-  ViewState,
-} from '@/lib/view-transform';
+import { ColorMode, isMobileViewport, RemoteSettings } from '@/lib/settings-store';
+import { VIEW_BACKGROUND, ViewState } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
@@ -95,10 +90,9 @@ function applyHighQualitySmoothing(
   ctx.imageSmoothingQuality = 'high';
 }
 
-/** Single source of truth for display canvas CSS + buffer dimensions. */
-function syncDisplayCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
-  const vw = window.visualViewport?.width ?? window.innerWidth;
-  const vh = window.visualViewport?.height ?? window.innerHeight;
+function syncCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
+  const vw = Math.max(window.visualViewport?.width ?? window.innerWidth, 1);
+  const vh = Math.max(window.visualViewport?.height ?? window.innerHeight, 1);
   const dpr = window.devicePixelRatio || 1;
 
   canvas.style.width = `${vw}px`;
@@ -108,26 +102,51 @@ function syncDisplayCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
   canvas.style.left = '0';
   canvas.style.display = 'block';
   canvas.style.backgroundColor = VIEW_BACKGROUND;
-  canvas.width = Math.round(vw * dpr);
-  canvas.height = Math.round(vh * dpr);
+  canvas.style.touchAction = 'none';
+
+  const bw = Math.round(vw * dpr);
+  const bh = Math.round(vh * dpr);
+  if (canvas.width !== bw || canvas.height !== bh) {
+    canvas.width = bw;
+    canvas.height = bh;
+  }
 
   return { cssW: vw, cssH: vh, dpr };
+}
+
+function paintCoverFrame(
+  ctx: CanvasRenderingContext2D,
+  offscreen: CanvasBuffer,
+  remoteW: number,
+  remoteH: number,
+  vw: number,
+  vh: number,
+): void {
+  const scale = Math.max(vw / remoteW, vh / remoteH);
+  const dw = remoteW * scale;
+  const dh = remoteH * scale;
+  const x = (vw - dw) / 2;
+  const y = (vh - dh) / 2;
+  applyHighQualitySmoothing(ctx);
+  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, x, y, dw, dh);
 }
 
 export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
   connected: boolean,
-  viewStateRef: React.MutableRefObject<ViewState>,
+  _viewStateRef: React.MutableRefObject<ViewState>,
 ) {
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
+  const [debugInfo, setDebugInfo] = useState('');
   const offscreenRef = useRef<CanvasBuffer | null>(null);
   const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(
     null,
   );
+  const displayCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const renderSeqRef = useRef(0);
   const displayInitializedRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
@@ -143,6 +162,7 @@ export function useFrameRenderer(
     if (!connected) {
       setHasReceivedFrame(false);
       displayInitializedRef.current = false;
+      displayCtxRef.current = null;
       offscreenRef.current = null;
       offscreenCtxRef.current = null;
     }
@@ -162,56 +182,43 @@ export function useFrameRenderer(
     const canvas = canvasRef.current;
     if (!canvas) return;
 
-    const { cssW, cssH, dpr } = syncDisplayCanvasSize(canvas);
-    if (cssW <= 0 || cssH <= 0) return;
+    const { cssW, cssH, dpr } = syncCanvasSize(canvas);
 
-    const ctx = canvas.getContext('2d', {
-      alpha: false,
-      desynchronized: settingsRef.current.display.hardwareAcceleration,
-    });
+    let ctx = displayCtxRef.current;
+    if (!ctx) {
+      ctx = canvas.getContext('2d', {
+        alpha: false,
+        desynchronized: settingsRef.current.display.hardwareAcceleration,
+      });
+      displayCtxRef.current = ctx;
+    }
     if (!ctx) return;
 
     try {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
       ctx.fillStyle = VIEW_BACKGROUND;
       ctx.fillRect(0, 0, cssW, cssH);
 
       const offscreen = offscreenRef.current;
-      if (!offscreen || offscreen.width === 0 || offscreen.height === 0) return;
+      const remoteW = offscreen?.width ?? 0;
+      const remoteH = offscreen?.height ?? 0;
 
-      const viewState = viewStateRef.current;
-      const scaleMode = settingsRef.current.display.scaleMode;
-      const { destX, destY, destW, destH } = computeDestRect(
-        offscreen.width,
-        offscreen.height,
-        cssW,
-        cssH,
-        scaleMode,
-        viewState.scale,
-        viewState.offsetX,
-        viewState.offsetY,
-      );
+      if (offscreen && remoteW > 0 && remoteH > 0) {
+        applyColorMode(ctx, settingsRef.current.display.colorMode);
+        paintCoverFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
+      }
 
-      if (destW <= 0 || destH <= 0) return;
-
-      applyHighQualitySmoothing(ctx);
-      applyColorMode(ctx, settingsRef.current.display.colorMode);
-      ctx.drawImage(
-        offscreen as CanvasImageSource,
-        0,
-        0,
-        offscreen.width,
-        offscreen.height,
-        destX,
-        destY,
-        destW,
-        destH,
-      );
+      if (isMobileViewport()) {
+        const styleW = canvas.style.width;
+        const styleH = canvas.style.height;
+        setDebugInfo(
+          `buf ${canvas.width}×${canvas.height} · css ${styleW}×${styleH} · remote ${remoteW}×${remoteH} · vp ${cssW}×${cssH}`,
+        );
+      }
     } catch {
       // keep last painted display frame
     }
-  }, [applyColorMode, canvasRef, viewStateRef]);
+  }, [applyColorMode, canvasRef]);
 
   const bindViewportResize = useCallback(() => {
     paintDisplayCanvas();
@@ -362,6 +369,7 @@ export function useFrameRenderer(
     frameCount,
     dimensions,
     hasReceivedFrame,
+    debugInfo,
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,

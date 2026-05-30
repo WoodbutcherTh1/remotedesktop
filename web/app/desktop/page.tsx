@@ -15,7 +15,7 @@ import { useKeyboardHandler } from '@/hooks/useKeyboardHandler';
 import { useSettings } from '@/hooks/useSettings';
 import { DEFAULT_RELAY_URL, STORAGE_KEYS } from '@/lib/constants';
 import { BinaryFrame } from '@/lib/frame-protocol';
-import { ScaleMode } from '@/lib/settings-store';
+import { isMobileViewport, ScaleMode } from '@/lib/settings-store';
 import { ViewState } from '@/lib/view-transform';
 
 export default function DesktopPage() {
@@ -64,9 +64,25 @@ export default function DesktopPage() {
       },
     });
 
-  const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
-    useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
+  const {
+    fps,
+    frameCount,
+    dimensions,
+    hasReceivedFrame,
+    debugInfo,
+    renderFrame,
+    takeScreenshot,
+    initializeDisplayCanvas,
+  } = useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
   renderFrameRef.current = renderFrame;
+
+  useEffect(() => {
+    if (!loaded) return;
+    if (isMobileViewport() && settings.display.scaleMode !== 'fill') {
+      updateSection('display', { scaleMode: 'fill' });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loaded]);
 
   const { sendKeyCombo } = useKeyboardHandler({
     settings,
@@ -169,7 +185,19 @@ export default function DesktopPage() {
   }
 
   return (
-    <div ref={containerRef} className="fixed inset-0 m-0 p-0 overflow-hidden bg-[#0A0A0F]">
+    <div
+      ref={containerRef}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        width: '100vw',
+        height: '100dvh',
+        background: '#0A0A0F',
+        overflow: 'hidden',
+        margin: 0,
+        padding: 0,
+      }}
+    >
       <RemoteCanvas
         canvasRef={canvasRef}
         viewStateRef={viewStateRef}
@@ -183,6 +211,7 @@ export default function DesktopPage() {
         latency={latency}
         connected={status === 'connected'}
         hasReceivedFrame={hasReceivedFrame}
+        debugInfo={debugInfo}
         onCanvasMount={initializeDisplayCanvas}
       />
 

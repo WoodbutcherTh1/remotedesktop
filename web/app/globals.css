@@ -95,23 +95,16 @@ select {
   border-bottom: 2px solid #7c3aed;
 }
 
-.remote-canvas-container {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100vw;
-  height: 100dvh;
-  overflow: hidden;
-  background-color: #0a0a0f;
-}
-
-canvas.remote-canvas {
+#display {
   margin: 0;
   padding: 0;
   border: none;
+  max-width: none;
+  max-height: none;
   image-rendering: auto;
   transition: none !important;
   animation: none !important;
   transform: none !important;
+  object-fit: unset !important;
   touch-action: none;
 }

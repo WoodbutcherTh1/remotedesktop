@@ -125,7 +125,7 @@ function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial
   return result;
 }
 
-function isMobileViewport(): boolean {
+export function isMobileViewport(): boolean {
   if (typeof window === 'undefined') return false;
   return window.matchMedia('(max-width: 767px)').matches;
 }
@@ -148,7 +148,7 @@ export function loadSettings(): RemoteSettings {
       DEFAULT_SETTINGS as unknown as Record<string, unknown>,
       parsed as Record<string, unknown>,
     ) as unknown as RemoteSettings;
-    if (!parsed.display?.scaleMode && isMobileViewport()) {
+    if (isMobileViewport()) {
       merged.display = { ...merged.display, scaleMode: 'fill' };
     }
     return merged;

@@ -31,6 +31,7 @@ interface RemoteCanvasProps {
   latency: number;
   connected: boolean;
   hasReceivedFrame: boolean;
+  debugInfo?: string;
   onCanvasMount?: () => void;
 }
 
@@ -47,6 +48,7 @@ export default function RemoteCanvas({
   latency,
   connected,
   hasReceivedFrame,
+  debugInfo,
   onCanvasMount,
 }: RemoteCanvasProps) {
   const [viewTransform, setViewTransform] = useState<ViewTransform>({
@@ -162,25 +164,18 @@ export default function RemoteCanvas({
       : null;
 
   return (
-    <div
-      id="viewport"
-      className="remote-canvas-container"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        width: '100vw',
-        height: '100dvh',
-        background: '#0A0A0F',
-        overflow: 'hidden',
-        margin: 0,
-        padding: 0,
-      }}
-    >
+    <>
       <canvas
         id="display"
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-        className="remote-canvas"
         style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          display: 'block',
+          touchAction: 'none',
+          width: '100vw',
+          height: '100dvh',
           cursor: settings.mouse.showLocalCursor
             ? cursorStyleMap[settings.mouse.cursorStyle]
             : 'none',
@@ -234,6 +229,12 @@ export default function RemoteCanvas({
         scaleMode={scaleMode}
       />
 
+      {debugInfo && (
+        <div className="md:hidden absolute bottom-14 left-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[9px] leading-tight text-zinc-400 pointer-events-none break-all">
+          {debugInfo}
+        </div>
+      )}
+
       <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
         <span className={latencyColorClass(latency)}>{latency}ms</span>
         <span className="text-zinc-500"> · </span>
@@ -257,8 +258,9 @@ export default function RemoteCanvas({
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
           <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>
+          {debugInfo && <div className="text-zinc-500">{debugInfo}</div>}
         </div>
       )}
-    </div>
+    </>
   );
 }
