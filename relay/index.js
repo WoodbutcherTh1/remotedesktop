@@ -2,6 +2,7 @@ const { WebSocketServer, WebSocket } = require('ws');
 
 const PORT = process.env.PORT || 8080;
 const SECRET_TOKEN = process.env.SECRET_TOKEN || 'dev-token-change-me';
+const FRAME_MAGIC = 0xfd;
 
 const wss = new WebSocketServer({ port: PORT, host: '0.0.0.0' });
 
@@ -30,6 +31,10 @@ function checkRateLimit(ws) {
   }
   entry.count += 1;
   return entry.count <= RATE_LIMIT;
+}
+
+function isBinaryFrame(raw) {
+  return Buffer.isBuffer(raw) && raw.length > 0 && raw[0] === FRAME_MAGIC;
 }
 
 function broadcastAgentStatus(online) {
@@ -88,6 +93,25 @@ function handleAuth(ws, data) {
   ws.close(4003, 'Invalid role');
 }
 
+function forwardBinaryFrame(ws, raw) {
+  if (!isAuthenticated(ws)) {
+    send(ws, { type: 'auth_error', message: 'Not authenticated' });
+    ws.close(4001, 'Unauthorized');
+    return;
+  }
+
+  if (ws.role === 'agent') {
+    for (const client of clients) {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(raw, { binary: true });
+      }
+    }
+    return;
+  }
+
+  send(ws, { type: 'error', message: 'Clients cannot send binary frames' });
+}
+
 function handleMessage(ws, raw) {
   let data;
   try {
@@ -114,16 +138,6 @@ function handleMessage(ws, raw) {
       break;
 
     case 'pong':
-      break;
-
-    case 'frame':
-      if (ws.role === 'agent') {
-        for (const client of clients) {
-          if (client.readyState === WebSocket.OPEN) {
-            client.send(raw);
-          }
-        }
-      }
       break;
 
     case 'command':
@@ -162,7 +176,14 @@ wss.on('connection', (ws) => {
   ws.authenticated = false;
   ws.role = null;
 
-  ws.on('message', (raw) => handleMessage(ws, raw.toString()));
+  ws.on('message', (raw, isBinary) => {
+    if (isBinary || isBinaryFrame(raw)) {
+      forwardBinaryFrame(ws, raw);
+      return;
+    }
+    handleMessage(ws, raw.toString());
+  });
+
   ws.on('close', () => cleanup(ws));
   ws.on('error', (err) => {
     console.error('[relay] WebSocket error:', err.message);
