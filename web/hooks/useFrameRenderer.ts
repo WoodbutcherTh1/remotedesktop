@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { ColorMode, RemoteSettings } from '@/lib/settings-store';
-import { computeFitDestRect, VIEW_BACKGROUND, ViewState } from '@/lib/view-transform';
+import { VIEW_BACKGROUND } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
@@ -13,7 +13,7 @@ interface FrameRendererState {
   lastFrameTime: number;
 }
 
-async function decodeRectJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
+async function decodeJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
   try {
     const blob = new Blob([jpeg as BlobPart], { type: 'image/jpeg' });
     return await createImageBitmap(blob);
@@ -32,7 +32,9 @@ function createBufferCanvas(width: number, height: number): CanvasBuffer {
   return canvas;
 }
 
-function get2dContext(buffer: CanvasBuffer): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null {
+function get2dContext(
+  buffer: CanvasBuffer,
+): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null {
   return buffer.getContext('2d', { alpha: false, desynchronized: true });
 }
 
@@ -43,22 +45,36 @@ function applyHighQualitySmoothing(
   ctx.imageSmoothingQuality = 'high';
 }
 
+function resizeDisplayCanvas(canvas: HTMLCanvasElement): void {
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  if (canvas.width !== w || canvas.height !== h) {
+    canvas.width = w;
+    canvas.height = h;
+  }
+}
+
 export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
   connected: boolean,
-  viewStateRef: React.MutableRefObject<ViewState>,
 ) {
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
   const offscreenRef = useRef<CanvasBuffer | null>(null);
-  const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(null);
+  const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(
+    null,
+  );
   const renderSeqRef = useRef(0);
   const displayInitializedRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
-  const statsRef = useRef<FrameRendererState>({ fps: 0, frameCount: 0, lastFrameTime: performance.now() });
+  const statsRef = useRef<FrameRendererState>({
+    fps: 0,
+    frameCount: 0,
+    lastFrameTime: performance.now(),
+  });
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
@@ -86,17 +102,7 @@ export function useFrameRenderer(
     const offscreen = offscreenRef.current;
     if (!canvas || !offscreen || offscreen.width === 0 || offscreen.height === 0) return;
 
-    const viewState = viewStateRef.current;
-    const viewportW = viewState.containerWidth > 0 ? viewState.containerWidth : canvas.clientWidth;
-    const viewportH = viewState.containerHeight > 0 ? viewState.containerHeight : canvas.clientHeight;
-    if (viewportW <= 0 || viewportH <= 0) return;
-
-    const bufferW = Math.round(viewportW);
-    const bufferH = Math.round(viewportH);
-    if (canvas.width !== bufferW || canvas.height !== bufferH) {
-      canvas.width = bufferW;
-      canvas.height = bufferH;
-    }
+    resizeDisplayCanvas(canvas);
 
     const ctx = canvas.getContext('2d', {
       alpha: false,
@@ -104,39 +110,40 @@ export function useFrameRenderer(
     });
     if (!ctx) return;
 
+    const remoteWidth = offscreen.width;
+    const remoteHeight = offscreen.height;
+    const scaleX = canvas.width / remoteWidth;
+    const scaleY = canvas.height / remoteHeight;
+    const scale = Math.min(scaleX, scaleY);
+    const x = (canvas.width - remoteWidth * scale) / 2;
+    const y = (canvas.height - remoteHeight * scale) / 2;
+
     try {
       ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, bufferW, bufferH);
-
-      const { destX, destY, destW, destH } = computeFitDestRect(
-        offscreen.width,
-        offscreen.height,
-        viewportW,
-        viewportH,
-        viewState.scale,
-        viewState.offsetX,
-        viewState.offsetY,
-      );
-
-      if (destW <= 0 || destH <= 0) return;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       applyHighQualitySmoothing(ctx);
       applyColorMode(ctx, settingsRef.current.display.colorMode);
       ctx.drawImage(
         offscreen as CanvasImageSource,
-        0,
-        0,
-        offscreen.width,
-        offscreen.height,
-        destX,
-        destY,
-        destW,
-        destH,
+        x,
+        y,
+        remoteWidth * scale,
+        remoteHeight * scale,
       );
     } catch {
       // keep last painted display frame
     }
-  }, [applyColorMode, canvasRef, viewStateRef]);
+  }, [applyColorMode, canvasRef]);
+
+  useEffect(() => {
+    const onResize = () => {
+      const canvas = canvasRef.current;
+      if (canvas) resizeDisplayCanvas(canvas);
+    };
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [canvasRef]);
 
   useEffect(() => {
     const tick = () => {
@@ -152,40 +159,30 @@ export function useFrameRenderer(
     };
   }, [paintDisplayCanvas]);
 
-  const ensureOffscreen = useCallback((width: number, height: number): boolean => {
+  const ensureOffscreen = useCallback((width: number, height: number): void => {
     const existing = offscreenRef.current;
     if (existing && existing.width === width && existing.height === height) {
       if (!offscreenCtxRef.current) {
         offscreenCtxRef.current = get2dContext(existing);
       }
-      return false;
+      return;
     }
 
     const offscreen = createBufferCanvas(width, height);
     offscreenRef.current = offscreen;
     const ctx = get2dContext(offscreen);
-    if (!ctx) {
-      offscreenCtxRef.current = null;
-      return false;
-    }
     offscreenCtxRef.current = ctx;
-    try {
+    if (ctx) {
       applyHighQualitySmoothing(ctx);
-      ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, width, height);
-    } catch {
-      return false;
     }
     setDimensions({ width, height });
-    return true;
   }, []);
 
   const renderFrame = useCallback(async (frame: BinaryFrame) => {
     const seq = ++renderSeqRef.current;
 
-    let sizeChanged = false;
     try {
-      sizeChanged = ensureOffscreen(frame.width, frame.height);
+      ensureOffscreen(frame.width, frame.height);
     } catch {
       return;
     }
@@ -193,51 +190,28 @@ export function useFrameRenderer(
     const ctx = offscreenCtxRef.current;
     if (!ctx) return;
 
-    applyHighQualitySmoothing(ctx);
+    const fullRect =
+      frame.rects.find((r) => r.x === 0 && r.y === 0 && r.w === frame.width && r.h === frame.height) ??
+      frame.rects[0];
+    if (!fullRect) return;
 
-    if (frame.mode === 'full' || sizeChanged) {
-      try {
-        ctx.fillStyle = VIEW_BACKGROUND;
-        ctx.fillRect(0, 0, frame.width, frame.height);
-      } catch {
-        return;
-      }
-    }
-
-    const bitmaps: (ImageBitmap | null)[] = [];
-    for (const rect of frame.rects) {
-      try {
-        bitmaps.push(await decodeRectJpeg(rect.jpeg));
-      } catch {
-        bitmaps.push(null);
-      }
-    }
-
+    const bitmap = await decodeJpeg(fullRect.jpeg);
     if (seq !== renderSeqRef.current) {
-      bitmaps.forEach((bitmap) => {
-        try {
-          bitmap?.close();
-        } catch {
-          // ignore
-        }
-      });
+      bitmap?.close();
       return;
     }
+    if (!bitmap) return;
 
-    for (let i = 0; i < frame.rects.length; i++) {
-      const bitmap = bitmaps[i];
-      const rect = frame.rects[i];
-      if (!bitmap) continue;
+    try {
+      applyHighQualitySmoothing(ctx);
+      ctx.drawImage(bitmap, 0, 0, frame.width, frame.height);
+    } catch {
+      // skip corrupt frame
+    } finally {
       try {
-        ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+        bitmap.close();
       } catch {
-        // skip corrupt patch; offscreen keeps previous pixels in this rect
-      } finally {
-        try {
-          bitmap.close();
-        } catch {
-          // ignore
-        }
+        // ignore
       }
     }
 
@@ -271,13 +245,11 @@ export function useFrameRenderer(
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
     try {
+      canvas.style.imageRendering = 'auto';
+      resizeDisplayCanvas(canvas);
       applyHighQualitySmoothing(ctx);
-      const w = Math.max(canvas.width, canvas.clientWidth, 1);
-      const h = Math.max(canvas.height, canvas.clientHeight, 1);
-      if (canvas.width !== w) canvas.width = w;
-      if (canvas.height !== h) canvas.height = h;
       ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, w, h);
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       displayInitializedRef.current = true;
     } catch {
       // ignore

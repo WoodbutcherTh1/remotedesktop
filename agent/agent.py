@@ -2,7 +2,6 @@
 """RemoteDesk desktop agent — cross-platform screen capture and input relay."""
 
 import asyncio
-import hashlib
 import io
 import json
 import logging
@@ -28,14 +27,8 @@ log = logging.getLogger(__name__)
 RELAY_URL = os.getenv('RELAY_URL', 'wss://remotedesktop-production-fd00.up.railway.app')
 SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'test1234')
 CAPTURE_INTERVAL = 0.05
-FULL_FRAME_INTERVAL = 1.0
 PING_INTERVAL = 5.0
-BLOCK_SIZE = 32
-DEFAULT_QUALITY = 92
-MIN_QUALITY = 75
-MAX_QUALITY = 95
-LATENCY_HIGH_MS = 200
-LATENCY_LOW_MS = 100
+JPEG_QUALITY = 95
 FRAME_MAGIC = 0xFD
 FRAME_QUEUE_MAX = 30
 
@@ -102,11 +95,6 @@ class ScreenCapture:
         self.capture_width = self.monitor['width']
         self.capture_height = self.monitor['height']
         self._configure_native_resolution()
-        self.prev_hash: str | None = None
-        self.prev_image: Image.Image | None = None
-        self.last_full_frame = 0.0
-        self.quality = DEFAULT_QUALITY
-        self.latency_ms = 0.0
 
     def _configure_native_resolution(self) -> None:
         scale = _mac_display_scale()
@@ -172,108 +160,24 @@ class ScreenCapture:
         self.capture_height = shot.height
         return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
 
-    def frame_hash(self, img: Image.Image) -> str:
-        return hashlib.md5(img.tobytes()).hexdigest()
-
-    def find_dirty_rects(self, prev: Image.Image, curr: Image.Image) -> list[tuple[int, int, int, int]]:
-        w, h = curr.size
-        rects: list[tuple[int, int, int, int]] = []
-        for y in range(0, h, BLOCK_SIZE):
-            for x in range(0, w, BLOCK_SIZE):
-                bw = min(BLOCK_SIZE, w - x)
-                bh = min(BLOCK_SIZE, h - y)
-                prev_block = prev.crop((x, y, x + bw, y + bh))
-                curr_block = curr.crop((x, y, x + bw, y + bh))
-                if prev_block.tobytes() != curr_block.tobytes():
-                    rects.append((x, y, bw, bh))
-        return self._merge_rects(rects)
-
-    def _merge_rects(self, rects: list[tuple[int, int, int, int]]) -> list[tuple[int, int, int, int]]:
-        if not rects:
-            return []
-        merged: list[tuple[int, int, int, int]] = []
-        for rect in rects:
-            rx, ry, rw, rh = rect
-            found = False
-            for i, (mx, my, mw, mh) in enumerate(merged):
-                if not (rx + rw < mx or rx > mx + mw or ry + rh < my or ry > my + mh):
-                    nx = min(mx, rx)
-                    ny = min(my, ry)
-                    nw = max(mx + mw, rx + rw) - nx
-                    nh = max(my + mh, ry + rh) - ny
-                    merged[i] = (nx, ny, nw, nh)
-                    found = True
-                    break
-            if not found:
-                merged.append(rect)
-        return merged
-
-    def encode_jpeg_bytes(self, img: Image.Image, quality: int | None = None) -> bytes:
-        q = quality if quality is not None else self.quality
-        q = max(MIN_QUALITY, min(MAX_QUALITY, q))
+    def encode_jpeg_bytes(self, img: Image.Image) -> bytes:
         buf = io.BytesIO()
-        img.save(buf, format='JPEG', quality=q, optimize=True)
+        img.save(buf, format='JPEG', quality=JPEG_QUALITY, optimize=True)
         return buf.getvalue()
 
-    def adjust_quality(self) -> None:
-        if self.latency_ms > LATENCY_HIGH_MS:
-            self.quality = MIN_QUALITY
-        elif self.latency_ms < LATENCY_LOW_MS:
-            self.quality = MAX_QUALITY
-        else:
-            self.quality = DEFAULT_QUALITY
+    def build_binary_frame(self, img: Image.Image) -> bytes:
+        timestamp = int(time.time() * 1000) & 0xFFFFFFFF
+        jpeg = self.encode_jpeg_bytes(img)
+        return self._pack_frame(img.width, img.height, timestamp, jpeg)
 
-    def build_binary_frame(self, img: Image.Image, force_full: bool = False) -> bytes | None:
-        now = time.time()
-        current_hash = self.frame_hash(img)
-        timestamp = int(now * 1000) & 0xFFFFFFFF
-
-        if force_full or (now - self.last_full_frame) >= FULL_FRAME_INTERVAL:
-            self.last_full_frame = now
-            self.prev_hash = current_hash
-            self.prev_image = img.copy()
-            jpeg = self.encode_jpeg_bytes(img)
-            return self._pack_frame('full', img.width, img.height, timestamp, [(0, 0, img.width, img.height, jpeg)])
-
-        if self.prev_hash == current_hash:
-            return None
-
-        if self.prev_image is None:
-            self.prev_hash = current_hash
-            self.prev_image = img.copy()
-            jpeg = self.encode_jpeg_bytes(img)
-            return self._pack_frame('full', img.width, img.height, timestamp, [(0, 0, img.width, img.height, jpeg)])
-
-        dirty = self.find_dirty_rects(self.prev_image, img)
-        self.prev_hash = current_hash
-        self.prev_image = img.copy()
-
-        if not dirty:
-            return None
-
-        rects: list[tuple[int, int, int, int, bytes]] = []
-        for x, y, w, h in dirty:
-            patch = img.crop((x, y, x + w, y + h))
-            rects.append((x, y, w, h, self.encode_jpeg_bytes(patch)))
-
-        return self._pack_frame('dirty', img.width, img.height, timestamp, rects)
-
-    def _pack_frame(
-        self,
-        mode: str,
-        width: int,
-        height: int,
-        timestamp: int,
-        rects: list[tuple[int, int, int, int, bytes]],
-    ) -> bytes:
-        mode_byte = 0 if mode == 'full' else 1
-        header = struct.pack('>BBIIIH', FRAME_MAGIC, mode_byte, width, height, timestamp, self.quality)
-        header += struct.pack('>H', len(rects))
+    def _pack_frame(self, width: int, height: int, timestamp: int, jpeg: bytes) -> bytes:
+        mode_byte = 0  # full frame only
+        header = struct.pack('>BBIIIH', FRAME_MAGIC, mode_byte, width, height, timestamp, JPEG_QUALITY)
+        header += struct.pack('>H', 1)
         buf = bytearray(header)
-        for x, y, w, h, jpeg in rects:
-            buf += struct.pack('>IIII', x, y, w, h)
-            buf += struct.pack('>I', len(jpeg))
-            buf += jpeg
+        buf += struct.pack('>IIII', 0, 0, width, height)
+        buf += struct.pack('>I', len(jpeg))
+        buf += jpeg
         return bytes(buf)
 
 
@@ -419,9 +323,7 @@ class RemoteAgent:
             loop_start = time.time()
             try:
                 img = self.capture.capture_raw()
-                frame = self.capture.build_binary_frame(img)
-                if frame:
-                    bridge.put_frame(frame)
+                bridge.put_frame(self.capture.build_binary_frame(img))
             except Exception as exc:
                 log.error('Capture error: %s', exc)
             elapsed = time.time() - loop_start
@@ -450,10 +352,7 @@ class RemoteAgent:
             if msg.get('type') == 'command':
                 execute_command(msg)
             elif msg.get('type') == 'pong':
-                sent = msg.get('timestamp')
-                if sent:
-                    self.capture.latency_ms = max(0, time.time() * 1000 - sent)
-                    self.capture.adjust_quality()
+                pass
             elif msg.get('type') == 'ping':
                 await ws.send(json.dumps({'type': 'pong', 'timestamp': msg.get('timestamp', int(time.time() * 1000))}))
             elif msg.get('type') == 'heartbeat':

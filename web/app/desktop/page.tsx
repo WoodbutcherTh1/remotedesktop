@@ -65,7 +65,7 @@ export default function DesktopPage() {
     });
 
   const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
-    useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
+    useFrameRenderer(canvasRef, settings, status === 'connected');
   renderFrameRef.current = renderFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({
@@ -158,9 +158,26 @@ export default function DesktopPage() {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden md:relative md:inset-auto md:w-auto md:h-screen flex flex-col bg-background"
+      className="fixed top-0 left-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F]"
     >
-      <div className="hidden md:block">
+      <RemoteCanvas
+        canvasRef={canvasRef}
+        containerRef={canvasContainerRef}
+        viewStateRef={viewStateRef}
+        settings={settings}
+        remoteWidth={width}
+        remoteHeight={height}
+        sendCommand={sendCommand}
+        showStats={settings.display.showStatsOverlay}
+        fps={fps}
+        frameCount={frameCount}
+        latency={latency}
+        connected={status === 'connected'}
+        hasReceivedFrame={hasReceivedFrame}
+        onCanvasMount={initializeDisplayCanvas}
+      />
+
+      <div className="hidden md:block relative z-10">
         <TopBar
           status={status}
           latency={latency}
@@ -179,27 +196,10 @@ export default function DesktopPage() {
       </div>
 
       {settings.keyboard.showSpecialKeysToolbar && (
-        <div className="hidden md:block border-b border-white/5 shrink-0">
+        <div className="hidden md:block relative z-10 border-b border-white/5">
           <KeyboardShortcutBar onShortcut={sendKeyCombo} visible />
         </div>
       )}
-
-      <RemoteCanvas
-        canvasRef={canvasRef}
-        containerRef={canvasContainerRef}
-        viewStateRef={viewStateRef}
-        settings={settings}
-        remoteWidth={width}
-        remoteHeight={height}
-        sendCommand={sendCommand}
-        showStats={settings.display.showStatsOverlay}
-        fps={fps}
-        frameCount={frameCount}
-        latency={latency}
-        connected={status === 'connected'}
-        hasReceivedFrame={hasReceivedFrame}
-        onCanvasMount={initializeDisplayCanvas}
-      />
 
       <MobileKeyboardButton sendCommand={sendCommand} keyboardMode={settings.keyboard.mode} />
 

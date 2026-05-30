@@ -55,25 +55,23 @@ export default function RemoteCanvas({
     offsetX: 0,
     offsetY: 0,
   });
-  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [containerSize, setContainerSize] = useState({
+    width: typeof window !== 'undefined' ? window.innerWidth : 0,
+    height: typeof window !== 'undefined' ? window.innerHeight : 0,
+  });
 
   useEffect(() => {
     onCanvasMount?.();
   }, [onCanvasMount]);
 
   useEffect(() => {
-    const node = containerRef.current;
-    if (!node) return;
-
     const updateSize = () => {
-      setContainerSize({ width: node.clientWidth, height: node.clientHeight });
+      setContainerSize({ width: window.innerWidth, height: window.innerHeight });
     };
-
     updateSize();
-    const observer = new ResizeObserver(updateSize);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [containerRef]);
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+  }, []);
 
   useEffect(() => {
     viewStateRef.current = {
@@ -147,13 +145,14 @@ export default function RemoteCanvas({
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F] md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto md:bg-background"
+      className="remote-canvas-container fixed top-0 left-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F]"
     >
       <canvas
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-        className="remote-canvas block w-full h-full border-0 md:border md:border-white/[0.08] pointer-events-none md:pointer-events-auto"
+        className="remote-canvas absolute top-0 left-0 w-full h-full border-0 pointer-events-none md:pointer-events-auto"
         style={{
           backgroundColor: '#0A0A0F',
+          imageRendering: 'auto',
           cursor: settings.mouse.showLocalCursor
             ? cursorStyleMap[settings.mouse.cursorStyle]
             : 'none',
@@ -220,7 +219,7 @@ export default function RemoteCanvas({
       </div>
 
       {showStats && (
-        <div className="absolute top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5">
+        <div className="absolute top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5 z-30 pointer-events-none">
           <div>Frames: {frameCount}</div>
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
