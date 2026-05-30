@@ -22,13 +22,13 @@ export function resizeDisplayCanvas(canvas: HTMLCanvasElement): {
 } {
   const { width, height, dpr } = getClientViewport();
 
-  canvas.style.width = `${width}px`;
-  canvas.style.height = `${height}px`;
   canvas.style.position = 'fixed';
   canvas.style.top = '0';
   canvas.style.left = '0';
-  canvas.style.right = 'auto';
-  canvas.style.bottom = 'auto';
+  canvas.style.right = '0';
+  canvas.style.bottom = '0';
+  canvas.style.width = '100%';
+  canvas.style.height = `${height}px`;
   canvas.style.margin = '0';
   canvas.style.padding = '0';
   canvas.style.border = 'none';

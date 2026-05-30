@@ -96,10 +96,16 @@ select {
 }
 
 /* Override Tailwind preflight: canvas { max-width: 100%; height: auto } */
+canvas {
+  max-width: none !important;
+  max-height: none !important;
+}
+
 canvas#display {
   margin: 0 !important;
   padding: 0 !important;
   border: none !important;
+  width: 100% !important;
   max-width: none !important;
   max-height: none !important;
   image-rendering: auto;
@@ -109,7 +115,6 @@ canvas#display {
   object-fit: unset !important;
   touch-action: none;
   position: fixed;
-  top: 0;
-  left: 0;
+  inset: 0;
   z-index: 1;
 }

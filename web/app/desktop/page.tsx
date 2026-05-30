@@ -76,8 +76,9 @@ export default function DesktopPage() {
 
   useEffect(() => {
     if (!loaded) return;
-    if (settings.display.scaleMode !== 'stretch') {
-      updateSection('display', { scaleMode: 'stretch' });
+    const expectedMode: ScaleMode = isMobileViewport() ? 'fit' : 'stretch';
+    if (settings.display.scaleMode !== expectedMode) {
+      updateSection('display', { scaleMode: expectedMode });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
@@ -104,7 +105,7 @@ export default function DesktopPage() {
         offsetY: 0,
         containerWidth: viewStateRef.current.containerWidth,
         containerHeight: viewStateRef.current.containerHeight,
-        scaleMode: 'stretch',
+        scaleMode: isMobileViewport() ? 'fit' : 'stretch',
       };
     }
   }, [status]);

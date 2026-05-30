@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { resizeDisplayCanvas } from '@/lib/client-viewport';
-import { ColorMode, RemoteSettings } from '@/lib/settings-store';
+import { ColorMode, RemoteSettings, ScaleMode } from '@/lib/settings-store';
 import { VIEW_BACKGROUND } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
@@ -93,6 +93,7 @@ function drawFrame(
   clientW: number,
   clientH: number,
   dpr: number,
+  scaleMode: ScaleMode,
 ): void {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = VIEW_BACKGROUND;
@@ -101,7 +102,34 @@ function drawFrame(
   if (!offscreen || remoteW <= 0 || remoteH <= 0) return;
 
   applyHighQualitySmoothing(ctx);
-  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, clientW, clientH);
+
+  if (scaleMode === 'stretch') {
+    ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, clientW, clientH);
+    return;
+  }
+
+  const scaleX = clientW / remoteW;
+  const scaleY = clientH / remoteH;
+  let scale: number;
+  switch (scaleMode) {
+    case 'fit':
+      scale = Math.min(scaleX, scaleY);
+      break;
+    case 'fill':
+      scale = Math.max(scaleX, scaleY);
+      break;
+    case 'original':
+      scale = 1;
+      break;
+    default:
+      scale = Math.min(scaleX, scaleY);
+  }
+
+  const drawW = remoteW * scale;
+  const drawH = remoteH * scale;
+  const x = (clientW - drawW) / 2;
+  const y = (clientH - drawH) / 2;
+  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, x, y, drawW, drawH);
 }
 
 export function useFrameRenderer(
@@ -173,7 +201,7 @@ export function useFrameRenderer(
       if (offscreen && remoteW > 0 && remoteH > 0) {
         applyColorMode(ctx, settingsRef.current.display.colorMode);
       }
-      drawFrame(ctx, offscreen, remoteW, remoteH, clientW, clientH, dpr);
+      drawFrame(ctx, offscreen, remoteW, remoteH, clientW, clientH, dpr, settingsRef.current.display.scaleMode);
     } catch {
       // keep last painted display frame
     }

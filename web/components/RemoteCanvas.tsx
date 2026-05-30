@@ -55,7 +55,7 @@ export default function RemoteCanvas({
     offsetY: 0,
   });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const scaleMode = 'stretch' as const;
+  const scaleMode = isMobileViewport() ? ('fit' as const) : settings.display.scaleMode;
 
   useEffect(() => {
     onCanvasMount?.();
@@ -89,7 +89,7 @@ export default function RemoteCanvas({
       containerHeight: containerSize.height,
       scaleMode,
     };
-  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
+  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height, scaleMode]);
 
   const handleViewTransformChange = useCallback(
     (next: ViewTransform) => {
@@ -215,7 +215,7 @@ export default function RemoteCanvas({
       />
 
       <div className="md:hidden fixed top-2 right-2 z-50 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
-        <span className="text-zinc-500">fill-v2 · </span>
+        <span className="text-zinc-500">fill-v3 · </span>
         <span className={latencyColorClass(latency)}>{latency}ms</span>
         <span className="text-zinc-500"> · </span>
         <span className="text-zinc-300">{fps} FPS</span>
@@ -228,13 +228,13 @@ export default function RemoteCanvas({
 
       {showStats && (
         <div className="fixed top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5 z-50 pointer-events-none">
-          <div>fill-v2</div>
+          <div>fill-v3</div>
           <div>Frames: {frameCount}</div>
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Remote: {remoteWidth}×{remoteHeight}</div>
           <div>Client: {clientViewport.width}×{clientViewport.height}</div>
-          <div>Scale: stretch</div>
+          <div>Scale: {scaleMode}</div>
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
           <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>
