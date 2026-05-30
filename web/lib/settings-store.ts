@@ -1,4 +1,5 @@
 import { QUALITY_PRESETS, QualityPreset } from './constants';
+import { TouchInteractionMode } from './view-transform';
 
 export type CursorStyle = 'default' | 'crosshair' | 'dot' | 'pointer';
 export type MouseMode = 'absolute' | 'relative';
@@ -22,6 +23,7 @@ export interface RemoteSettings {
     ctrlClickAsRightClick: boolean;
     dragEnabled: boolean;
     dragThreshold: number;
+    touchMode: TouchInteractionMode;
   };
   keyboard: {
     mode: KeyboardMode;
@@ -67,6 +69,7 @@ export const DEFAULT_SETTINGS: RemoteSettings = {
     ctrlClickAsRightClick: false,
     dragEnabled: true,
     dragThreshold: 5,
+    touchMode: 'move',
   },
   keyboard: {
     mode: 'unicode',
