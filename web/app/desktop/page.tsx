@@ -148,7 +148,10 @@ export default function DesktopPage() {
   }
 
   return (
-    <div ref={containerRef} className="h-screen flex flex-col bg-background overflow-hidden">
+    <div
+      ref={containerRef}
+      className="fixed inset-0 w-screen h-[100dvh] md:relative md:inset-auto md:w-auto md:h-screen flex flex-col bg-background overflow-hidden"
+    >
       <div className="hidden md:block">
         <TopBar
           status={status}
@@ -167,7 +170,13 @@ export default function DesktopPage() {
       </div>
 
       {(settings.keyboard.showSpecialKeysToolbar || showMobileKeyboard) && (
-        <div className={`${showMobileKeyboard ? 'block' : 'hidden md:block'} border-b border-white/5`}>
+        <div
+          className={`${
+            showMobileKeyboard
+              ? 'fixed top-0 left-0 right-0 z-40 md:relative md:z-auto'
+              : 'hidden md:block'
+          } border-b border-white/5 shrink-0`}
+        >
           <KeyboardShortcutBar onShortcut={sendKeyCombo} visible />
         </div>
       )}

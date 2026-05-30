@@ -47,20 +47,23 @@ export default function RemoteCanvas({
 
   const containerClass =
     settings.display.scaleMode === 'fit'
-      ? 'flex items-center justify-center'
+      ? 'flex items-center justify-center w-full h-full'
       : settings.display.scaleMode === 'original'
         ? 'overflow-auto'
-        : 'flex items-stretch';
+        : 'flex items-stretch w-full h-full';
 
   return (
-    <div ref={containerRef} className={`relative flex-1 bg-background overflow-hidden ${containerClass}`}>
+    <div
+      ref={containerRef}
+      className={`fixed inset-0 z-0 w-screen h-[100dvh] md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto bg-black md:bg-background overflow-hidden ${containerClass}`}
+    >
       <div
-        className="relative"
+        className="relative max-w-full max-h-full"
         style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
       >
         <canvas
           ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-          className="border border-white/[0.08]"
+          className="bg-black block border-0 md:border md:border-white/[0.08]"
           style={{
             cursor: settings.mouse.showLocalCursor
               ? cursorStyleMap[settings.mouse.cursorStyle]
