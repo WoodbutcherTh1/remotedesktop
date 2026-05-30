@@ -56,11 +56,8 @@ export default function DesktopPage() {
       },
     });
 
-  const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot } = useFrameRenderer(
-    canvasRef,
-    settings,
-    status === 'connected',
-  );
+  const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
+    useFrameRenderer(canvasRef, settings, status === 'connected');
   renderFrameRef.current = renderFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({
@@ -192,6 +189,7 @@ export default function DesktopPage() {
         latency={latency}
         connected={status === 'connected'}
         hasReceivedFrame={hasReceivedFrame}
+        onCanvasMount={initializeDisplayCanvas}
       />
 
       <MobileKeyboardButton sendCommand={sendCommand} keyboardMode={settings.keyboard.mode} />

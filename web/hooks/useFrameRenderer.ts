@@ -44,13 +44,21 @@ export function useFrameRenderer(
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
-  const bufferRef = useRef<CanvasBuffer | null>(null);
+  const offscreenRef = useRef<CanvasBuffer | null>(null);
+  const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(null);
   const renderSeqRef = useRef(0);
+  const displayInitializedRef = useRef(false);
+  const rafIdRef = useRef<number | null>(null);
   const statsRef = useRef<FrameRendererState>({ fps: 0, frameCount: 0, lastFrameTime: performance.now() });
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
 
   useEffect(() => {
     if (!connected) {
       setHasReceivedFrame(false);
+      displayInitializedRef.current = false;
+      offscreenRef.current = null;
+      offscreenCtxRef.current = null;
     }
   }, [connected]);
 
@@ -64,89 +72,143 @@ export function useFrameRenderer(
     }
   }, []);
 
-  const presentBuffer = useCallback(
-    (canvas: HTMLCanvasElement, buffer: CanvasBuffer) => {
-      if (canvas.width !== buffer.width || canvas.height !== buffer.height) {
-        canvas.width = buffer.width;
-        canvas.height = buffer.height;
+  const copyOffscreenToDisplay = useCallback(() => {
+    const canvas = canvasRef.current;
+    const offscreen = offscreenRef.current;
+    if (!canvas || !offscreen || offscreen.width === 0 || offscreen.height === 0) return;
+
+    if (canvas.width !== offscreen.width || canvas.height !== offscreen.height) {
+      canvas.width = offscreen.width;
+      canvas.height = offscreen.height;
+    }
+
+    const ctx = canvas.getContext('2d', {
+      alpha: false,
+      desynchronized: settingsRef.current.display.hardwareAcceleration,
+    });
+    if (!ctx) return;
+
+    try {
+      applyColorMode(ctx, settingsRef.current.display.colorMode);
+      ctx.drawImage(offscreen as CanvasImageSource, 0, 0);
+    } catch {
+      // keep last painted display frame
+    }
+  }, [applyColorMode, canvasRef]);
+
+  useEffect(() => {
+    const tick = () => {
+      copyOffscreenToDisplay();
+      rafIdRef.current = requestAnimationFrame(tick);
+    };
+    rafIdRef.current = requestAnimationFrame(tick);
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+        rafIdRef.current = null;
       }
+    };
+  }, [copyOffscreenToDisplay]);
 
-      const ctx = canvas.getContext('2d', {
-        alpha: false,
-        desynchronized: settings.display.hardwareAcceleration,
-      });
-      if (!ctx) return;
-
-      applyColorMode(ctx, settings.display.colorMode);
-      ctx.drawImage(buffer as CanvasImageSource, 0, 0);
-    },
-    [applyColorMode, settings.display.hardwareAcceleration],
-  );
-
-  const renderFrame = useCallback(
-    async (frame: BinaryFrame) => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-
-      const seq = ++renderSeqRef.current;
-
-      if (!bufferRef.current) {
-        bufferRef.current = createBufferCanvas(frame.width, frame.height);
+  const ensureOffscreen = useCallback((width: number, height: number): boolean => {
+    const existing = offscreenRef.current;
+    if (existing && existing.width === width && existing.height === height) {
+      if (!offscreenCtxRef.current) {
+        offscreenCtxRef.current = get2dContext(existing);
       }
-      const buffer = bufferRef.current;
-      const bufferCtx = get2dContext(buffer);
-      if (!bufferCtx) return;
+      return false;
+    }
 
-      const sizeChanged = buffer.width !== frame.width || buffer.height !== frame.height;
-      if (sizeChanged) {
-        bufferRef.current = createBufferCanvas(frame.width, frame.height);
-        const newBuffer = bufferRef.current;
-        const newCtx = get2dContext(newBuffer);
-        if (!newCtx) return;
-        newCtx.fillStyle = '#000';
-        newCtx.fillRect(0, 0, frame.width, frame.height);
-        setDimensions({ width: frame.width, height: frame.height });
-      }
+    const offscreen = createBufferCanvas(width, height);
+    offscreenRef.current = offscreen;
+    const ctx = get2dContext(offscreen);
+    if (!ctx) {
+      offscreenCtxRef.current = null;
+      return false;
+    }
+    offscreenCtxRef.current = ctx;
+    try {
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, width, height);
+    } catch {
+      return false;
+    }
+    setDimensions({ width, height });
+    return true;
+  }, []);
 
-      const activeBuffer = bufferRef.current!;
-      const activeCtx = get2dContext(activeBuffer)!;
+  const renderFrame = useCallback(async (frame: BinaryFrame) => {
+    const seq = ++renderSeqRef.current;
 
-      if (frame.mode === 'full' || sizeChanged) {
-        activeCtx.fillStyle = '#000';
-        activeCtx.fillRect(0, 0, frame.width, frame.height);
-      }
+    let sizeChanged = false;
+    try {
+      sizeChanged = ensureOffscreen(frame.width, frame.height);
+    } catch {
+      return;
+    }
 
-      const bitmaps = await Promise.all(frame.rects.map((rect) => decodeRectJpeg(rect.jpeg)));
+    const ctx = offscreenCtxRef.current;
+    if (!ctx) return;
 
-      if (seq !== renderSeqRef.current) {
-        bitmaps.forEach((bitmap) => bitmap?.close());
+    if (frame.mode === 'full' || sizeChanged) {
+      try {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(0, 0, frame.width, frame.height);
+      } catch {
         return;
       }
+    }
 
-      for (let i = 0; i < frame.rects.length; i++) {
-        const bitmap = bitmaps[i];
-        const rect = frame.rects[i];
-        if (!bitmap) continue;
-        activeCtx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
-        bitmap.close();
+    const bitmaps: (ImageBitmap | null)[] = [];
+    for (const rect of frame.rects) {
+      try {
+        bitmaps.push(await decodeRectJpeg(rect.jpeg));
+      } catch {
+        bitmaps.push(null);
       }
+    }
 
-      presentBuffer(canvas, activeBuffer);
-      setHasReceivedFrame(true);
+    if (seq !== renderSeqRef.current) {
+      bitmaps.forEach((bitmap) => {
+        try {
+          bitmap?.close();
+        } catch {
+          // ignore
+        }
+      });
+      return;
+    }
 
-      const now = performance.now();
-      setFrameCount((c) => c + 1);
-      statsRef.current.frameCount += 1;
-      const elapsed = now - statsRef.current.lastFrameTime;
-      if (elapsed >= 1000) {
-        statsRef.current.fps = Math.round((statsRef.current.frameCount * 1000) / elapsed);
-        statsRef.current.frameCount = 0;
-        statsRef.current.lastFrameTime = now;
-        setFps(statsRef.current.fps);
+    for (let i = 0; i < frame.rects.length; i++) {
+      const bitmap = bitmaps[i];
+      const rect = frame.rects[i];
+      if (!bitmap) continue;
+      try {
+        ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+      } catch {
+        // skip corrupt patch; offscreen keeps previous pixels in this rect
+      } finally {
+        try {
+          bitmap.close();
+        } catch {
+          // ignore
+        }
       }
-    },
-    [canvasRef, presentBuffer],
-  );
+    }
+
+    setHasReceivedFrame(true);
+
+    const now = performance.now();
+    setFrameCount((c) => c + 1);
+    statsRef.current.frameCount += 1;
+    const elapsed = now - statsRef.current.lastFrameTime;
+    if (elapsed >= 1000) {
+      statsRef.current.fps = Math.round((statsRef.current.frameCount * 1000) / elapsed);
+      statsRef.current.frameCount = 0;
+      statsRef.current.lastFrameTime = now;
+      setFps(statsRef.current.fps);
+    }
+  }, [ensureOffscreen]);
 
   const takeScreenshot = useCallback(() => {
     const canvas = canvasRef.current;
@@ -157,5 +219,30 @@ export function useFrameRenderer(
     link.click();
   }, [canvasRef]);
 
-  return { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot };
+  const initializeDisplayCanvas = useCallback(() => {
+    if (displayInitializedRef.current) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+    try {
+      const w = Math.max(canvas.width, 1);
+      const h = Math.max(canvas.height, 1);
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, w, h);
+      displayInitializedRef.current = true;
+    } catch {
+      // ignore
+    }
+  }, [canvasRef]);
+
+  return {
+    fps,
+    frameCount,
+    dimensions,
+    hasReceivedFrame,
+    renderFrame,
+    takeScreenshot,
+    initializeDisplayCanvas,
+  };
 }

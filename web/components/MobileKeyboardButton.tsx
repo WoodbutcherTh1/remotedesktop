@@ -36,12 +36,18 @@ export default function MobileKeyboardButton({ sendCommand, keyboardMode }: Mobi
   const [active, setActive] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const focusInput = useCallback(() => {
+    const input = inputRef.current;
+    if (!input) return;
+    input.value = '';
+    input.focus();
+    setTimeout(() => input.focus(), 50);
+  }, []);
+
   const openKeyboard = useCallback(() => {
     setActive(true);
-    requestAnimationFrame(() => {
-      inputRef.current?.focus();
-    });
-  }, []);
+    focusInput();
+  }, [focusInput]);
 
   const closeKeyboard = useCallback(() => {
     inputRef.current?.blur();
@@ -59,9 +65,19 @@ export default function MobileKeyboardButton({ sendCommand, keyboardMode }: Mobi
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLInputElement>) => {
       const target = e.currentTarget;
+      const native = e.nativeEvent as InputEvent;
+
+      if (native.data) {
+        sendCommand('type_text', { text: native.data, mode: keyboardMode });
+        target.value = '';
+        return;
+      }
+
       const text = target.value;
       if (!text) return;
-      sendCommand('type_text', { text, mode: keyboardMode });
+      for (const char of text) {
+        sendCommand('type_text', { text: char, mode: keyboardMode });
+      }
       target.value = '';
     },
     [sendCommand, keyboardMode],
@@ -92,13 +108,25 @@ export default function MobileKeyboardButton({ sendCommand, keyboardMode }: Mobi
         autoCorrect="off"
         autoCapitalize="off"
         spellCheck={false}
-        aria-hidden="true"
-        tabIndex={-1}
+        aria-label="Remote keyboard input"
         onInput={handleInput}
         onKeyDown={handleKeyDown}
         onBlur={handleBlur}
-        className="fixed opacity-0 w-px h-px pointer-events-none"
-        style={{ left: -9999, top: 0 }}
+        style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          width: 1,
+          height: 1,
+          opacity: 0,
+          zIndex: -1,
+          fontSize: 16,
+          border: 'none',
+          outline: 'none',
+          margin: 0,
+          padding: 0,
+          background: 'transparent',
+        }}
       />
       <button
         type="button"

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
 import { useMouseHandler } from '@/hooks/useMouseHandler';
 import TouchHandler from './TouchHandler';
@@ -24,6 +24,7 @@ interface RemoteCanvasProps {
   latency: number;
   connected: boolean;
   hasReceivedFrame: boolean;
+  onCanvasMount?: () => void;
 }
 
 export default function RemoteCanvas({
@@ -39,8 +40,13 @@ export default function RemoteCanvas({
   latency,
   connected,
   hasReceivedFrame,
+  onCanvasMount,
 }: RemoteCanvasProps) {
   const [zoom, setZoom] = useState(1);
+
+  useEffect(() => {
+    onCanvasMount?.();
+  }, [onCanvasMount]);
   const {
     cursorPos,
     handlePointerMove,
