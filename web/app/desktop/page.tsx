@@ -58,9 +58,8 @@ export default function DesktopPage() {
       },
     });
 
-  const { fps, dimensions, hasReceivedFrame, queueFrame, takeScreenshot } = useFrameRenderer(
+  const { fps, frameCount, dimensions, hasReceivedFrame, queueFrame, takeScreenshot } = useFrameRenderer(
     canvasRef,
-    canvasContainerRef,
     settings,
     status === 'connected',
   );
@@ -163,6 +162,7 @@ export default function DesktopPage() {
           status={status}
           latency={latency}
           fps={fps}
+          frameCount={frameCount}
           agentOnline={agentOnline}
           onFullscreen={handleFullscreen}
           onFitToggle={cycleScaleMode}
@@ -196,6 +196,7 @@ export default function DesktopPage() {
         sendCommand={sendCommand}
         showStats={settings.display.showStatsOverlay}
         fps={fps}
+        frameCount={frameCount}
         latency={latency}
         connected={status === 'connected'}
         hasReceivedFrame={hasReceivedFrame}

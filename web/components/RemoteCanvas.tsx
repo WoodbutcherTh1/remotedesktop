@@ -14,6 +14,7 @@ interface RemoteCanvasProps {
   sendCommand: (action: string, params?: Record<string, unknown>) => boolean;
   showStats: boolean;
   fps: number;
+  frameCount: number;
   latency: number;
   connected: boolean;
   hasReceivedFrame: boolean;
@@ -28,6 +29,7 @@ export default function RemoteCanvas({
   sendCommand,
   showStats,
   fps,
+  frameCount,
   latency,
   connected,
   hasReceivedFrame,
@@ -113,8 +115,13 @@ export default function RemoteCanvas({
         zoom={zoom}
       />
 
+      <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] text-zinc-400 pointer-events-none">
+        #{frameCount} · {fps} FPS
+      </div>
+
       {showStats && (
         <div className="absolute top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5">
+          <div>Frames: {frameCount}</div>
           <div>FPS: {fps}</div>
           <div>Latency: {latency}ms</div>
           <div>Resolution: {remoteWidth}×{remoteHeight}</div>

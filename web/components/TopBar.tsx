@@ -6,6 +6,7 @@ interface TopBarProps {
   status: string;
   latency: number;
   fps: number;
+  frameCount: number;
   agentOnline: boolean;
   onFullscreen: () => void;
   onFitToggle: () => void;
@@ -21,6 +22,7 @@ export default function TopBar({
   status,
   latency,
   fps,
+  frameCount,
   agentOnline,
   onFullscreen,
   onFitToggle,
@@ -45,6 +47,7 @@ export default function TopBar({
         <span className="text-sm capitalize">{agentOnline ? status : 'agent offline'}</span>
         <span className="text-xs text-zinc-500 font-mono">{latency}ms</span>
         <span className="text-xs text-zinc-500 font-mono">{fps} FPS</span>
+        <span className="text-xs text-zinc-500 font-mono">#{frameCount}</span>
       </div>
 
       <div className="flex-1 flex items-center justify-center gap-1">
