@@ -16,12 +16,20 @@ import { useSettings } from '@/hooks/useSettings';
 import { DEFAULT_RELAY_URL, STORAGE_KEYS } from '@/lib/constants';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { ScaleMode } from '@/lib/settings-store';
+import { ViewState } from '@/lib/view-transform';
 
 export default function DesktopPage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewStateRef = useRef<ViewState>({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    containerWidth: 0,
+    containerHeight: 0,
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSettings, setMobileSettings] = useState(false);
   const [token, setToken] = useState('');
@@ -57,7 +65,7 @@ export default function DesktopPage() {
     });
 
   const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
-    useFrameRenderer(canvasRef, settings, status === 'connected');
+    useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
   renderFrameRef.current = renderFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({
@@ -179,6 +187,7 @@ export default function DesktopPage() {
       <RemoteCanvas
         canvasRef={canvasRef}
         containerRef={canvasContainerRef}
+        viewStateRef={viewStateRef}
         settings={settings}
         remoteWidth={width}
         remoteHeight={height}

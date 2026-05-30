@@ -19,6 +19,8 @@ interface TouchHandlerProps {
   onViewTransformChange: (next: ViewTransform) => void;
   containerWidth: number;
   containerHeight: number;
+  remoteWidth: number;
+  remoteHeight: number;
 }
 
 export default function TouchHandler({
@@ -29,6 +31,8 @@ export default function TouchHandler({
   onViewTransformChange,
   containerWidth,
   containerHeight,
+  remoteWidth,
+  remoteHeight,
 }: TouchHandlerProps) {
   const { scale } = viewTransform;
   const lastTapRef = useRef(0);
@@ -53,6 +57,20 @@ export default function TouchHandler({
     }
   }, []);
 
+  const clampOffset = useCallback(
+    (offsetX: number, offsetY: number, nextScale: number) =>
+      clampViewOffset(
+        offsetX,
+        offsetY,
+        nextScale,
+        containerWidth,
+        containerHeight,
+        remoteWidth,
+        remoteHeight,
+      ),
+    [containerHeight, containerWidth, remoteHeight, remoteWidth],
+  );
+
   const applyPan = useCallback(
     (clientX: number, clientY: number) => {
       const start = panStartRef.current;
@@ -60,16 +78,10 @@ export default function TouchHandler({
 
       const dx = clientX - start.x;
       const dy = clientY - start.y;
-      const clamped = clampViewOffset(
-        start.offsetX + dx,
-        start.offsetY + dy,
-        scale,
-        containerWidth,
-        containerHeight,
-      );
+      const clamped = clampOffset(start.offsetX + dx, start.offsetY + dy, scale);
       onViewTransformChange({ scale, ...clamped });
     },
-    [containerHeight, containerWidth, onViewTransformChange, scale],
+    [clampOffset, onViewTransformChange, scale],
   );
 
   const handlePointerDown = useCallback(
@@ -209,26 +221,13 @@ export default function TouchHandler({
         const pinchScale = dist / lastPinchDist.current;
         if (Math.abs(pinchScale - 1) > 0.01) {
           const nextScale = clampViewScale(scale * pinchScale);
-          const clamped = clampViewOffset(
-            viewTransform.offsetX,
-            viewTransform.offsetY,
-            nextScale,
-            containerWidth,
-            containerHeight,
-          );
+          const clamped = clampOffset(viewTransform.offsetX, viewTransform.offsetY, nextScale);
           onViewTransformChange({ scale: nextScale, ...clamped });
         }
       }
       lastPinchDist.current = dist;
     },
-    [
-      containerHeight,
-      containerWidth,
-      onViewTransformChange,
-      scale,
-      viewTransform.offsetX,
-      viewTransform.offsetY,
-    ],
+    [clampOffset, onViewTransformChange, scale, viewTransform.offsetX, viewTransform.offsetY],
   );
 
   const handleTouchEnd = useCallback(

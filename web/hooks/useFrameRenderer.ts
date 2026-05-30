@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { ColorMode, RemoteSettings } from '@/lib/settings-store';
+import { computeFitDestRect, VIEW_BACKGROUND, ViewState } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
@@ -46,6 +47,7 @@ export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
   connected: boolean,
+  viewStateRef: React.MutableRefObject<ViewState>,
 ) {
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
@@ -79,14 +81,21 @@ export function useFrameRenderer(
     }
   }, []);
 
-  const copyOffscreenToDisplay = useCallback(() => {
+  const paintDisplayCanvas = useCallback(() => {
     const canvas = canvasRef.current;
     const offscreen = offscreenRef.current;
     if (!canvas || !offscreen || offscreen.width === 0 || offscreen.height === 0) return;
 
-    if (canvas.width !== offscreen.width || canvas.height !== offscreen.height) {
-      canvas.width = offscreen.width;
-      canvas.height = offscreen.height;
+    const viewState = viewStateRef.current;
+    const viewportW = viewState.containerWidth > 0 ? viewState.containerWidth : canvas.clientWidth;
+    const viewportH = viewState.containerHeight > 0 ? viewState.containerHeight : canvas.clientHeight;
+    if (viewportW <= 0 || viewportH <= 0) return;
+
+    const bufferW = Math.round(viewportW);
+    const bufferH = Math.round(viewportH);
+    if (canvas.width !== bufferW || canvas.height !== bufferH) {
+      canvas.width = bufferW;
+      canvas.height = bufferH;
     }
 
     const ctx = canvas.getContext('2d', {
@@ -96,17 +105,42 @@ export function useFrameRenderer(
     if (!ctx) return;
 
     try {
+      ctx.fillStyle = VIEW_BACKGROUND;
+      ctx.fillRect(0, 0, bufferW, bufferH);
+
+      const { destX, destY, destW, destH } = computeFitDestRect(
+        offscreen.width,
+        offscreen.height,
+        viewportW,
+        viewportH,
+        viewState.scale,
+        viewState.offsetX,
+        viewState.offsetY,
+      );
+
+      if (destW <= 0 || destH <= 0) return;
+
       applyHighQualitySmoothing(ctx);
       applyColorMode(ctx, settingsRef.current.display.colorMode);
-      ctx.drawImage(offscreen as CanvasImageSource, 0, 0);
+      ctx.drawImage(
+        offscreen as CanvasImageSource,
+        0,
+        0,
+        offscreen.width,
+        offscreen.height,
+        destX,
+        destY,
+        destW,
+        destH,
+      );
     } catch {
       // keep last painted display frame
     }
-  }, [applyColorMode, canvasRef]);
+  }, [applyColorMode, canvasRef, viewStateRef]);
 
   useEffect(() => {
     const tick = () => {
-      copyOffscreenToDisplay();
+      paintDisplayCanvas();
       rafIdRef.current = requestAnimationFrame(tick);
     };
     rafIdRef.current = requestAnimationFrame(tick);
@@ -116,7 +150,7 @@ export function useFrameRenderer(
         rafIdRef.current = null;
       }
     };
-  }, [copyOffscreenToDisplay]);
+  }, [paintDisplayCanvas]);
 
   const ensureOffscreen = useCallback((width: number, height: number): boolean => {
     const existing = offscreenRef.current;
@@ -137,7 +171,7 @@ export function useFrameRenderer(
     offscreenCtxRef.current = ctx;
     try {
       applyHighQualitySmoothing(ctx);
-      ctx.fillStyle = '#000';
+      ctx.fillStyle = VIEW_BACKGROUND;
       ctx.fillRect(0, 0, width, height);
     } catch {
       return false;
@@ -163,7 +197,7 @@ export function useFrameRenderer(
 
     if (frame.mode === 'full' || sizeChanged) {
       try {
-        ctx.fillStyle = '#000';
+        ctx.fillStyle = VIEW_BACKGROUND;
         ctx.fillRect(0, 0, frame.width, frame.height);
       } catch {
         return;
@@ -238,9 +272,11 @@ export function useFrameRenderer(
     if (!ctx) return;
     try {
       applyHighQualitySmoothing(ctx);
-      const w = Math.max(canvas.width, 1);
-      const h = Math.max(canvas.height, 1);
-      ctx.fillStyle = '#000';
+      const w = Math.max(canvas.width, canvas.clientWidth, 1);
+      const h = Math.max(canvas.height, canvas.clientHeight, 1);
+      if (canvas.width !== w) canvas.width = w;
+      if (canvas.height !== h) canvas.height = h;
+      ctx.fillStyle = VIEW_BACKGROUND;
       ctx.fillRect(0, 0, w, h);
       displayInitializedRef.current = true;
     } catch {

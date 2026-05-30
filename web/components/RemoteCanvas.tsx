@@ -2,7 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
-import { clampViewOffset, ViewTransform } from '@/lib/view-transform';
+import {
+  clampViewOffset,
+  mapRemoteToClient,
+  ViewState,
+  ViewTransform,
+} from '@/lib/view-transform';
 import { useMouseHandler } from '@/hooks/useMouseHandler';
 import TouchHandler from './TouchHandler';
 
@@ -15,6 +20,7 @@ function latencyColorClass(latency: number): string {
 interface RemoteCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
   containerRef: React.RefObject<HTMLDivElement>;
+  viewStateRef: React.MutableRefObject<ViewState>;
   settings: RemoteSettings;
   remoteWidth: number;
   remoteHeight: number;
@@ -31,6 +37,7 @@ interface RemoteCanvasProps {
 export default function RemoteCanvas({
   canvasRef,
   containerRef,
+  viewStateRef,
   settings,
   remoteWidth,
   remoteHeight,
@@ -69,6 +76,14 @@ export default function RemoteCanvas({
   }, [containerRef]);
 
   useEffect(() => {
+    viewStateRef.current = {
+      ...viewTransform,
+      containerWidth: containerSize.width,
+      containerHeight: containerSize.height,
+    };
+  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
+
+  useEffect(() => {
     if (viewTransform.scale <= 1 && (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)) {
       setViewTransform((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }));
     }
@@ -82,10 +97,12 @@ export default function RemoteCanvas({
         next.scale,
         containerSize.width,
         containerSize.height,
+        remoteWidth,
+        remoteHeight,
       );
       setViewTransform({ scale: next.scale, ...clamped });
     },
-    [containerSize.height, containerSize.width],
+    [containerSize.height, containerSize.width, remoteHeight, remoteWidth],
   );
 
   const {
@@ -103,7 +120,7 @@ export default function RemoteCanvas({
     remoteWidth,
     remoteHeight,
     sendCommand,
-    scaleMode: settings.display.scaleMode,
+    viewTransform,
   });
 
   const cursorStyleMap: Record<string, string> = {
@@ -114,60 +131,65 @@ export default function RemoteCanvas({
   };
 
   const { scale, offsetX, offsetY } = viewTransform;
+  const cursorScreenPos =
+    cursorPos && remoteWidth > 0 && containerSize.width > 0
+      ? mapRemoteToClient(
+          cursorPos.x,
+          cursorPos.y,
+          remoteWidth,
+          remoteHeight,
+          containerSize.width,
+          containerSize.height,
+          viewTransform,
+        )
+      : null;
 
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-black md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto md:bg-background"
+      className="fixed inset-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F] md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto md:bg-background"
     >
-      <div
-        className="relative w-full h-full"
+      <canvas
+        ref={canvasRef as React.RefObject<HTMLCanvasElement>}
+        className="remote-canvas block w-full h-full border-0 md:border md:border-white/[0.08] pointer-events-none md:pointer-events-auto"
         style={{
-          transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
-          transformOrigin: 'center center',
+          backgroundColor: '#0A0A0F',
+          cursor: settings.mouse.showLocalCursor
+            ? cursorStyleMap[settings.mouse.cursorStyle]
+            : 'none',
         }}
-      >
-        <canvas
-          ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-          className="remote-canvas block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08] pointer-events-none md:pointer-events-auto"
-          style={{
-            cursor: settings.mouse.showLocalCursor
-              ? cursorStyleMap[settings.mouse.cursorStyle]
-              : 'none',
-          }}
-          onPointerMove={handlePointerMove}
-          onPointerDown={handlePointerDown}
-          onPointerUp={handlePointerUp}
-          onDoubleClick={handleDoubleClick}
-          onWheel={handleWheel}
-          onContextMenu={handleContextMenu}
-        />
+        onPointerMove={handlePointerMove}
+        onPointerDown={handlePointerDown}
+        onPointerUp={handlePointerUp}
+        onDoubleClick={handleDoubleClick}
+        onWheel={handleWheel}
+        onContextMenu={handleContextMenu}
+      />
 
-        {settings.mouse.showRemoteCursor && cursorPos && remoteWidth > 0 && (
-          <div
-            className="absolute pointer-events-none z-10"
-            style={{
-              left: `${(cursorPos.x / remoteWidth) * 100}%`,
-              top: `${(cursorPos.y / remoteHeight) * 100}%`,
-              transform: 'translate(-50%, -50%)',
-            }}
-          >
-            {settings.mouse.cursorStyle === 'dot' ? (
-              <div
-                className="w-3 h-3 rounded-full border-2 border-white"
-                style={{ backgroundColor: settings.mouse.cursorColor }}
-              />
-            ) : (
-              <svg width="20" height="20" viewBox="0 0 20 20" fill={settings.mouse.cursorColor}>
-                <path d="M0 0 L0 16 L4 12 L7 19 L9 18 L6 11 L12 11 Z" />
-              </svg>
-            )}
-          </div>
-        )}
-      </div>
+      {settings.mouse.showRemoteCursor && cursorScreenPos && (
+        <div
+          className="absolute pointer-events-none z-10"
+          style={{
+            left: `${cursorScreenPos.x}px`,
+            top: `${cursorScreenPos.y}px`,
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          {settings.mouse.cursorStyle === 'dot' ? (
+            <div
+              className="w-3 h-3 rounded-full border-2 border-white"
+              style={{ backgroundColor: settings.mouse.cursorColor }}
+            />
+          ) : (
+            <svg width="20" height="20" viewBox="0 0 20 20" fill={settings.mouse.cursorColor}>
+              <path d="M0 0 L0 16 L4 12 L7 19 L9 18 L6 11 L12 11 Z" />
+            </svg>
+          )}
+        </div>
+      )}
 
       {connected && !hasReceivedFrame && (
-        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none bg-[#0A0A0F]">
           <p className="text-sm text-zinc-400">Waiting for screen...</p>
         </div>
       )}
@@ -180,6 +202,8 @@ export default function RemoteCanvas({
         onViewTransformChange={handleViewTransformChange}
         containerWidth={containerSize.width}
         containerHeight={containerSize.height}
+        remoteWidth={remoteWidth}
+        remoteHeight={remoteHeight}
       />
 
       <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
@@ -201,8 +225,9 @@ export default function RemoteCanvas({
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Resolution: {remoteWidth}×{remoteHeight}</div>
-          <div>Scale: {settings.display.scaleMode}</div>
+          <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
+          <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>
         </div>
       )}
     </div>

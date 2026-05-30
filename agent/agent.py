@@ -210,6 +210,7 @@ class ScreenCapture:
 
     def encode_jpeg_bytes(self, img: Image.Image, quality: int | None = None) -> bytes:
         q = quality if quality is not None else self.quality
+        q = max(MIN_QUALITY, min(MAX_QUALITY, q))
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=q, optimize=True)
         return buf.getvalue()

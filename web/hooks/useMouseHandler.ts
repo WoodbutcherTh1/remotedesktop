@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
+import { mapClientToRemote, ViewTransform } from '@/lib/view-transform';
 
 interface UseMouseHandlerOptions {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -9,7 +10,7 @@ interface UseMouseHandlerOptions {
   remoteWidth: number;
   remoteHeight: number;
   sendCommand: (action: string, params?: Record<string, unknown>) => boolean;
-  scaleMode: 'fit' | 'original' | 'stretch';
+  viewTransform: ViewTransform;
 }
 
 export function useMouseHandler({
@@ -18,7 +19,7 @@ export function useMouseHandler({
   remoteWidth,
   remoteHeight,
   sendCommand,
-  scaleMode,
+  viewTransform,
 }: UseMouseHandlerOptions) {
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
   const relativePosRef = useRef({ x: 0, y: 0 });
@@ -28,33 +29,16 @@ export function useMouseHandler({
       const canvas = canvasRef.current;
       if (!canvas || remoteWidth === 0 || remoteHeight === 0) return null;
 
-      const rect = canvas.getBoundingClientRect();
-      let localX = clientX - rect.left;
-      let localY = clientY - rect.top;
-
-      const displayW = rect.width;
-      const displayH = rect.height;
-
-      if (scaleMode === 'fit') {
-        const scale = Math.min(displayW / remoteWidth, displayH / remoteHeight);
-        const offsetX = (displayW - remoteWidth * scale) / 2;
-        const offsetY = (displayH - remoteHeight * scale) / 2;
-        localX = (localX - offsetX) / scale;
-        localY = (localY - offsetY) / scale;
-      } else if (scaleMode === 'original') {
-        localX = localX * (remoteWidth / displayW);
-        localY = localY * (remoteHeight / displayH);
-      } else {
-        localX = localX * (remoteWidth / displayW);
-        localY = localY * (remoteHeight / displayH);
-      }
-
-      return {
-        x: Math.max(0, Math.min(remoteWidth - 1, Math.round(localX))),
-        y: Math.max(0, Math.min(remoteHeight - 1, Math.round(localY))),
-      };
+      return mapClientToRemote(
+        clientX,
+        clientY,
+        canvas.getBoundingClientRect(),
+        remoteWidth,
+        remoteHeight,
+        viewTransform,
+      );
     },
-    [canvasRef, remoteWidth, remoteHeight, scaleMode],
+    [canvasRef, remoteWidth, remoteHeight, viewTransform],
   );
 
   const handlePointerMove = useCallback(
