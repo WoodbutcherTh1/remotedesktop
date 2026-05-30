@@ -65,7 +65,7 @@ export default function DesktopPage() {
     });
 
   const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
-    useFrameRenderer(canvasRef, settings, status === 'connected');
+    useFrameRenderer(canvasRef, settings, status === 'connected', viewStateRef);
   renderFrameRef.current = renderFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({

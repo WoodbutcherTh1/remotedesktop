@@ -55,35 +55,45 @@ export default function RemoteCanvas({
     offsetX: 0,
     offsetY: 0,
   });
-  const [containerSize, setContainerSize] = useState({
-    width: typeof window !== 'undefined' ? window.innerWidth : 0,
-    height: typeof window !== 'undefined' ? window.innerHeight : 0,
-  });
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     onCanvasMount?.();
   }, [onCanvasMount]);
 
   useEffect(() => {
-    const updateSize = () => {
-      setContainerSize({ width: window.innerWidth, height: window.innerHeight });
+    const node = containerRef.current;
+    if (!node) return;
+
+    const readSize = () => {
+      const vv = window.visualViewport;
+      const width = Math.round(vv?.width ?? node.clientWidth ?? window.innerWidth);
+      const height = Math.round(vv?.height ?? node.clientHeight ?? window.innerHeight);
+      setContainerSize({ width, height });
     };
-    updateSize();
-    window.addEventListener('resize', updateSize);
-    return () => window.removeEventListener('resize', updateSize);
-  }, []);
+
+    readSize();
+    const observer = new ResizeObserver(readSize);
+    observer.observe(node);
+    window.addEventListener('resize', readSize);
+    window.visualViewport?.addEventListener('resize', readSize);
+    window.visualViewport?.addEventListener('scroll', readSize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', readSize);
+      window.visualViewport?.removeEventListener('resize', readSize);
+      window.visualViewport?.removeEventListener('scroll', readSize);
+    };
+  }, [containerRef]);
 
   useEffect(() => {
-    if (canvasRef.current) {
-      canvasRef.current.width = containerSize.width;
-      canvasRef.current.height = containerSize.height;
-    }
     viewStateRef.current = {
       ...viewTransform,
       containerWidth: containerSize.width,
       containerHeight: containerSize.height,
     };
-  }, [canvasRef, viewStateRef, viewTransform, containerSize.width, containerSize.height]);
+  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
 
   useEffect(() => {
     if (viewTransform.scale <= 1 && (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)) {
