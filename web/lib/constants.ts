@@ -7,8 +7,6 @@ export const STORAGE_KEYS = {
 export const DEFAULT_RELAY_URL =
   process.env.NEXT_PUBLIC_RELAY_URL || 'ws://localhost:8080';
 
-export const MOUSE_MOVE_MAX_HZ = 30;
-
 export const QUALITY_PRESETS = {
   low: 40,
   medium: 60,
@@ -18,24 +16,6 @@ export const QUALITY_PRESETS = {
 } as const;
 
 export type QualityPreset = keyof typeof QUALITY_PRESETS;
-
-export interface FrameRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  data: string;
-}
-
-export interface FrameMessage {
-  type: 'frame';
-  mode: 'full' | 'dirty';
-  width: number;
-  height: number;
-  rects: FrameRect[];
-  timestamp: number;
-  quality?: number;
-}
 
 export interface CommandMessage {
   type: 'command';
@@ -52,7 +32,6 @@ export type WSMessage =
   | { type: 'pong'; timestamp: number }
   | { type: 'heartbeat'; timestamp: number }
   | { type: 'error'; message: string }
-  | FrameMessage
   | CommandMessage;
 
 export const SPECIAL_KEYS = [

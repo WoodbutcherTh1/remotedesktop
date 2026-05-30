@@ -35,7 +35,7 @@ export default function DisplaySettings({ settings, onChange }: DisplaySettingsP
           />
         </SettingRow>
       )}
-      <SettingRow label="FPS limit">
+      <SettingRow label="Agent capture rate (FPS)">
         <RangeInput value={settings.fpsLimit} min={5} max={60} onChange={(v) => onChange({ fpsLimit: v })} />
       </SettingRow>
       <SettingRow label="Hardware acceleration">

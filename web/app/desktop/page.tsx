@@ -7,21 +7,31 @@ import TopBar from '@/components/TopBar';
 import SettingsPanel from '@/components/SettingsPanel';
 import KeyboardShortcutBar from '@/components/KeyboardShortcutBar';
 import MobileToolbar from '@/components/MobileToolbar';
+import MobileKeyboardButton from '@/components/MobileKeyboardButton';
 import ReconnectOverlay from '@/components/ReconnectOverlay';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import { useFrameRenderer } from '@/hooks/useFrameRenderer';
 import { useKeyboardHandler } from '@/hooks/useKeyboardHandler';
 import { useSettings } from '@/hooks/useSettings';
-import { DEFAULT_RELAY_URL, FrameMessage, STORAGE_KEYS } from '@/lib/constants';
+import { DEFAULT_RELAY_URL, STORAGE_KEYS } from '@/lib/constants';
+import { BinaryFrame } from '@/lib/frame-protocol';
 import { ScaleMode } from '@/lib/settings-store';
+import { ViewState } from '@/lib/view-transform';
 
 export default function DesktopPage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const viewStateRef = useRef<ViewState>({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+    containerWidth: 0,
+    containerHeight: 0,
+  });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSettings, setMobileSettings] = useState(false);
-  const [showMobileKeyboard, setShowMobileKeyboard] = useState(false);
   const [token, setToken] = useState('');
   const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
   const [remoteSize, setRemoteSize] = useState({ width: 0, height: 0 });
@@ -40,7 +50,7 @@ export default function DesktopPage() {
     setRelayUrl(storedRelay || DEFAULT_RELAY_URL);
   }, [router]);
 
-  const queueFrameRef = useRef<(f: FrameMessage) => void>(() => {});
+  const renderFrameRef = useRef<(f: BinaryFrame) => void>(() => {});
 
   const { status, latency, agentOnline, connect, disconnect, sendCommand, reconnectAttempt } =
     useWebSocket({
@@ -48,17 +58,15 @@ export default function DesktopPage() {
       token,
       autoReconnect: settings.advanced.autoReconnect,
       maxReconnectAttempts: settings.advanced.reconnectAttempts,
-      onMessage: (msg) => {
-        if (msg.type === 'frame') {
-          const frame = msg as FrameMessage;
-          setRemoteSize({ width: frame.width, height: frame.height });
-          queueFrameRef.current(frame);
-        }
+      onBinaryFrame: (frame) => {
+        setRemoteSize({ width: frame.width, height: frame.height });
+        renderFrameRef.current(frame);
       },
     });
 
-  const { fps, dimensions, queueFrame, takeScreenshot } = useFrameRenderer(canvasRef, settings);
-  queueFrameRef.current = queueFrame;
+  const { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot, initializeDisplayCanvas } =
+    useFrameRenderer(canvasRef, settings, status === 'connected');
+  renderFrameRef.current = renderFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({
     settings,
@@ -148,12 +156,33 @@ export default function DesktopPage() {
   }
 
   return (
-    <div ref={containerRef} className="h-screen flex flex-col bg-background overflow-hidden">
-      <div className="hidden md:block">
+    <div
+      ref={containerRef}
+      className="fixed top-0 left-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F]"
+    >
+      <RemoteCanvas
+        canvasRef={canvasRef}
+        containerRef={canvasContainerRef}
+        viewStateRef={viewStateRef}
+        settings={settings}
+        remoteWidth={width}
+        remoteHeight={height}
+        sendCommand={sendCommand}
+        showStats={settings.display.showStatsOverlay}
+        fps={fps}
+        frameCount={frameCount}
+        latency={latency}
+        connected={status === 'connected'}
+        hasReceivedFrame={hasReceivedFrame}
+        onCanvasMount={initializeDisplayCanvas}
+      />
+
+      <div className="hidden md:block relative z-10">
         <TopBar
           status={status}
           latency={latency}
           fps={fps}
+          frameCount={frameCount}
           agentOnline={agentOnline}
           onFullscreen={handleFullscreen}
           onFitToggle={cycleScaleMode}
@@ -166,28 +195,24 @@ export default function DesktopPage() {
         />
       </div>
 
-      {(settings.keyboard.showSpecialKeysToolbar || showMobileKeyboard) && (
-        <div className={`${showMobileKeyboard ? 'block' : 'hidden md:block'} border-b border-white/5`}>
+      {settings.keyboard.showSpecialKeysToolbar && (
+        <div className="hidden md:block relative z-10 border-b border-white/5">
           <KeyboardShortcutBar onShortcut={sendKeyCombo} visible />
         </div>
       )}
 
-      <RemoteCanvas
-        canvasRef={canvasRef}
-        settings={settings}
-        remoteWidth={width}
-        remoteHeight={height}
-        sendCommand={sendCommand}
-        showStats={settings.display.showStatsOverlay}
-        fps={fps}
-        latency={latency}
-      />
+      <MobileKeyboardButton sendCommand={sendCommand} keyboardMode={settings.keyboard.mode} />
 
       <MobileToolbar
-        onKeyboard={() => setShowMobileKeyboard((v) => !v)}
         onSettings={() => setMobileSettings(true)}
         onCtrlAltDel={() => sendCommand('ctrl_alt_del')}
         onDisconnect={handleDisconnect}
+        touchMode={settings.mouse.touchMode}
+        onTouchModeToggle={() =>
+          updateSection('mouse', {
+            touchMode: settings.mouse.touchMode === 'move' ? 'pan' : 'move',
+          })
+        }
       />
 
       <SettingsPanel

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { WSMessage } from '@/lib/constants';
+import { BinaryFrame, isBinaryFrame, parseBinaryFrame } from '@/lib/frame-protocol';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'reconnecting';
 
@@ -11,6 +12,7 @@ interface UseWebSocketOptions {
   autoReconnect?: boolean;
   maxReconnectAttempts?: number;
   onMessage?: (msg: WSMessage) => void;
+  onBinaryFrame?: (frame: BinaryFrame) => void;
   onAgentStatus?: (online: boolean) => void;
 }
 
@@ -20,6 +22,7 @@ export function useWebSocket({
   autoReconnect = true,
   maxReconnectAttempts = 10,
   onMessage,
+  onBinaryFrame,
   onAgentStatus,
 }: UseWebSocketOptions) {
   const [status, setStatus] = useState<ConnectionStatus>('disconnected');
@@ -29,19 +32,27 @@ export function useWebSocket({
   const reconnectAttempt = useRef(0);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pingTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const latencyTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const latencyRef = useRef(0);
   const mountedRef = useRef(true);
   const onMessageRef = useRef(onMessage);
+  const onBinaryFrameRef = useRef(onBinaryFrame);
   const onAgentStatusRef = useRef(onAgentStatus);
 
   useEffect(() => {
     onMessageRef.current = onMessage;
+    onBinaryFrameRef.current = onBinaryFrame;
     onAgentStatusRef.current = onAgentStatus;
-  }, [onMessage, onAgentStatus]);
+  }, [onMessage, onBinaryFrame, onAgentStatus]);
 
   const cleanup = useCallback(() => {
     if (pingTimer.current) {
       clearInterval(pingTimer.current);
       pingTimer.current = null;
+    }
+    if (latencyTimer.current) {
+      clearInterval(latencyTimer.current);
+      latencyTimer.current = null;
     }
     if (reconnectTimer.current) {
       clearTimeout(reconnectTimer.current);
@@ -66,6 +77,7 @@ export function useWebSocket({
     setStatus(reconnectAttempt.current > 0 ? 'reconnecting' : 'connecting');
 
     const ws = new WebSocket(url);
+    ws.binaryType = 'arraybuffer';
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -73,9 +85,17 @@ export function useWebSocket({
     };
 
     ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        if (isBinaryFrame(event.data)) {
+          const frame = parseBinaryFrame(event.data);
+          if (frame) onBinaryFrameRef.current?.(frame);
+        }
+        return;
+      }
+
       let msg: WSMessage;
       try {
-        msg = JSON.parse(event.data);
+        msg = JSON.parse(event.data as string);
       } catch {
         return;
       }
@@ -88,6 +108,9 @@ export function useWebSocket({
             ws.send(JSON.stringify({ type: 'ping', timestamp: Date.now() }));
           }
         }, 5000);
+        latencyTimer.current = setInterval(() => {
+          setLatency(latencyRef.current);
+        }, 1000);
         return;
       }
 
@@ -98,7 +121,7 @@ export function useWebSocket({
       }
 
       if (msg.type === 'pong') {
-        setLatency(Math.max(0, Date.now() - msg.timestamp));
+        latencyRef.current = Math.max(0, Date.now() - msg.timestamp);
         return;
       }
 
@@ -116,6 +139,10 @@ export function useWebSocket({
       if (pingTimer.current) {
         clearInterval(pingTimer.current);
         pingTimer.current = null;
+      }
+      if (latencyTimer.current) {
+        clearInterval(latencyTimer.current);
+        latencyTimer.current = null;
       }
 
       if (autoReconnect && mountedRef.current && reconnectAttempt.current < maxReconnectAttempts) {
@@ -136,6 +163,8 @@ export function useWebSocket({
     cleanup();
     setStatus('disconnected');
     setAgentOnline(false);
+    latencyRef.current = 0;
+    setLatency(0);
   }, [cleanup, maxReconnectAttempts]);
 
   const send = useCallback((payload: Record<string, unknown>) => {
