@@ -28,7 +28,7 @@ export default function DesktopPage() {
     offsetY: 0,
     containerWidth: 0,
     containerHeight: 0,
-    scaleMode: 'fill',
+    scaleMode: 'stretch',
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSettings, setMobileSettings] = useState(false);
@@ -69,7 +69,6 @@ export default function DesktopPage() {
     frameCount,
     dimensions,
     hasReceivedFrame,
-    debugInfo,
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,
@@ -78,8 +77,8 @@ export default function DesktopPage() {
 
   useEffect(() => {
     if (!loaded) return;
-    if (isMobileViewport() && settings.display.scaleMode !== 'fill') {
-      updateSection('display', { scaleMode: 'fill' });
+    if (isMobileViewport() && settings.display.scaleMode !== 'stretch') {
+      updateSection('display', { scaleMode: 'stretch' });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded]);
@@ -106,7 +105,7 @@ export default function DesktopPage() {
         offsetY: 0,
         containerWidth: viewStateRef.current.containerWidth,
         containerHeight: viewStateRef.current.containerHeight,
-        scaleMode: settings.display.scaleMode,
+        scaleMode: isMobileViewport() ? 'stretch' : settings.display.scaleMode,
       };
     }
   }, [status, settings.display.scaleMode]);
@@ -186,10 +185,14 @@ export default function DesktopPage() {
 
   return (
     <div
+      id="rd-viewport"
       ref={containerRef}
       style={{
         position: 'fixed',
-        inset: 0,
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
         width: '100vw',
         height: '100dvh',
         background: '#0A0A0F',
@@ -211,7 +214,6 @@ export default function DesktopPage() {
         latency={latency}
         connected={status === 'connected'}
         hasReceivedFrame={hasReceivedFrame}
-        debugInfo={debugInfo}
         onCanvasMount={initializeDisplayCanvas}
       />
 

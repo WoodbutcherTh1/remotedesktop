@@ -200,6 +200,21 @@ export function mapClientToRemote(
 
   const localX = clientX - canvasRect.left;
   const localY = clientY - canvasRect.top;
+
+  if (scaleMode === 'stretch') {
+    if (canvasRect.width <= 0 || canvasRect.height <= 0) return null;
+    return {
+      x: Math.max(
+        0,
+        Math.min(remoteWidth - 1, Math.round((localX / canvasRect.width) * remoteWidth)),
+      ),
+      y: Math.max(
+        0,
+        Math.min(remoteHeight - 1, Math.round((localY / canvasRect.height) * remoteHeight)),
+      ),
+    };
+  }
+
   const { destX, destY, destW, destH, totalScale } = computeDestRect(
     remoteWidth,
     remoteHeight,
@@ -232,6 +247,13 @@ export function mapRemoteToClient(
   viewTransform: ViewTransform,
   scaleMode: ScaleMode,
 ): { x: number; y: number } {
+  if (scaleMode === 'stretch' && remoteWidth > 0 && remoteHeight > 0) {
+    return {
+      x: (remoteX / remoteWidth) * viewportWidth,
+      y: (remoteY / remoteHeight) * viewportHeight,
+    };
+  }
+
   const { destX, destY, destW, destH } = computeDestRect(
     remoteWidth,
     remoteHeight,

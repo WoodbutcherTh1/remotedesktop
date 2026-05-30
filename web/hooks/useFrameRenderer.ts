@@ -91,8 +91,12 @@ function applyHighQualitySmoothing(
 }
 
 function syncCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
-  const vw = Math.max(window.visualViewport?.width ?? window.innerWidth, 1);
-  const vh = Math.max(window.visualViewport?.height ?? window.innerHeight, 1);
+  const layoutW = window.innerWidth;
+  const layoutH = window.innerHeight;
+  const vpW = window.visualViewport?.width ?? layoutW;
+  const vpH = window.visualViewport?.height ?? layoutH;
+  const vw = Math.max(isMobileViewport() ? Math.max(vpW, layoutW) : vpW, 1);
+  const vh = Math.max(isMobileViewport() ? Math.max(vpH, layoutH) : vpH, 1);
   const dpr = window.devicePixelRatio || 1;
 
   canvas.style.width = `${vw}px`;
@@ -112,6 +116,18 @@ function syncCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
   }
 
   return { cssW: vw, cssH: vh, dpr };
+}
+
+function paintStretchFrame(
+  ctx: CanvasRenderingContext2D,
+  offscreen: CanvasBuffer,
+  remoteW: number,
+  remoteH: number,
+  vw: number,
+  vh: number,
+): void {
+  applyHighQualitySmoothing(ctx);
+  ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, vw, vh);
 }
 
 function paintCoverFrame(
@@ -135,13 +151,12 @@ export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
   connected: boolean,
-  _viewStateRef: React.MutableRefObject<ViewState>,
+  viewStateRef: React.MutableRefObject<ViewState>,
 ) {
   const [fps, setFps] = useState(0);
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
-  const [debugInfo, setDebugInfo] = useState('');
   const offscreenRef = useRef<CanvasBuffer | null>(null);
   const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(
     null,
@@ -165,8 +180,17 @@ export function useFrameRenderer(
       displayCtxRef.current = null;
       offscreenRef.current = null;
       offscreenCtxRef.current = null;
+    } else if (isMobileViewport()) {
+      viewStateRef.current = {
+        scale: 1,
+        offsetX: 0,
+        offsetY: 0,
+        containerWidth: viewStateRef.current.containerWidth,
+        containerHeight: viewStateRef.current.containerHeight,
+        scaleMode: 'stretch',
+      };
     }
-  }, [connected]);
+  }, [connected, viewStateRef]);
 
   const applyColorMode = useCallback((ctx: CanvasRenderingContext2D, mode: ColorMode) => {
     if (mode === 'grayscale') {
@@ -205,15 +229,11 @@ export function useFrameRenderer(
 
       if (offscreen && remoteW > 0 && remoteH > 0) {
         applyColorMode(ctx, settingsRef.current.display.colorMode);
-        paintCoverFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
-      }
-
-      if (isMobileViewport()) {
-        const styleW = canvas.style.width;
-        const styleH = canvas.style.height;
-        setDebugInfo(
-          `buf ${canvas.width}×${canvas.height} · css ${styleW}×${styleH} · remote ${remoteW}×${remoteH} · vp ${cssW}×${cssH}`,
-        );
+        if (isMobileViewport()) {
+          paintStretchFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
+        } else {
+          paintCoverFrame(ctx, offscreen, remoteW, remoteH, cssW, cssH);
+        }
       }
     } catch {
       // keep last painted display frame
@@ -369,7 +389,6 @@ export function useFrameRenderer(
     frameCount,
     dimensions,
     hasReceivedFrame,
-    debugInfo,
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,

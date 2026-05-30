@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef } from 'react';
-import { RemoteSettings, ScaleMode } from '@/lib/settings-store';
+import { isMobileViewport, RemoteSettings, ScaleMode } from '@/lib/settings-store';
 import {
   clampViewOffset,
   clampViewScale,
@@ -198,6 +198,7 @@ export default function TouchHandler({
 
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
+      if (isMobileViewport()) return;
       if (e.touches.length === 2) {
         isPinchingRef.current = true;
         isPanningRef.current = false;
@@ -213,6 +214,7 @@ export default function TouchHandler({
 
   const handleTouchMove = useCallback(
     (e: React.TouchEvent) => {
+      if (isMobileViewport()) return;
       if (e.touches.length !== 2) return;
       e.preventDefault();
 

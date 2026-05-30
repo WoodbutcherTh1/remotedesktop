@@ -137,7 +137,7 @@ export function loadSettings(): RemoteSettings {
     if (!raw) {
       const defaults = { ...DEFAULT_SETTINGS };
       if (isMobileViewport()) {
-        defaults.display = { ...defaults.display, scaleMode: 'fill' };
+        defaults.display = { ...defaults.display, scaleMode: 'stretch' };
       } else {
         defaults.display = { ...defaults.display, scaleMode: 'fit' };
       }
@@ -149,7 +149,7 @@ export function loadSettings(): RemoteSettings {
       parsed as Record<string, unknown>,
     ) as unknown as RemoteSettings;
     if (isMobileViewport()) {
-      merged.display = { ...merged.display, scaleMode: 'fill' };
+      merged.display = { ...merged.display, scaleMode: 'stretch' };
     }
     return merged;
   } catch {

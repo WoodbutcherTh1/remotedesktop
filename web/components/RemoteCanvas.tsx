@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { RemoteSettings } from '@/lib/settings-store';
+import { isMobileViewport, RemoteSettings } from '@/lib/settings-store';
 import {
   clampViewOffset,
   getVisualViewportCssSize,
@@ -31,7 +31,6 @@ interface RemoteCanvasProps {
   latency: number;
   connected: boolean;
   hasReceivedFrame: boolean;
-  debugInfo?: string;
   onCanvasMount?: () => void;
 }
 
@@ -48,7 +47,6 @@ export default function RemoteCanvas({
   latency,
   connected,
   hasReceivedFrame,
-  debugInfo,
   onCanvasMount,
 }: RemoteCanvasProps) {
   const [viewTransform, setViewTransform] = useState<ViewTransform>({
@@ -62,6 +60,12 @@ export default function RemoteCanvas({
   useEffect(() => {
     onCanvasMount?.();
   }, [onCanvasMount]);
+
+  useEffect(() => {
+    if (isMobileViewport()) {
+      setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
+    }
+  }, []);
 
   useEffect(() => {
     if (connected) {
@@ -107,6 +111,10 @@ export default function RemoteCanvas({
 
   const handleViewTransformChange = useCallback(
     (next: ViewTransform) => {
+      if (isMobileViewport()) {
+        setViewTransform({ scale: 1, offsetX: 0, offsetY: 0 });
+        return;
+      }
       const clamped = clampViewOffset(
         next.offsetX,
         next.offsetY,
@@ -174,8 +182,9 @@ export default function RemoteCanvas({
           left: 0,
           display: 'block',
           touchAction: 'none',
-          width: '100vw',
-          height: '100dvh',
+          background: '#0A0A0F',
+          maxWidth: 'none',
+          maxHeight: 'none',
           cursor: settings.mouse.showLocalCursor
             ? cursorStyleMap[settings.mouse.cursorStyle]
             : 'none',
@@ -229,12 +238,6 @@ export default function RemoteCanvas({
         scaleMode={scaleMode}
       />
 
-      {debugInfo && (
-        <div className="md:hidden absolute bottom-14 left-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[9px] leading-tight text-zinc-400 pointer-events-none break-all">
-          {debugInfo}
-        </div>
-      )}
-
       <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
         <span className={latencyColorClass(latency)}>{latency}ms</span>
         <span className="text-zinc-500"> · </span>
@@ -258,7 +261,6 @@ export default function RemoteCanvas({
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
           <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>
-          {debugInfo && <div className="text-zinc-500">{debugInfo}</div>}
         </div>
       )}
     </>
