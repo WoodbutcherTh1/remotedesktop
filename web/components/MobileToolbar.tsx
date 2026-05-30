@@ -1,22 +1,19 @@
 'use client';
 
 interface MobileToolbarProps {
-  onKeyboard: () => void;
   onSettings: () => void;
   onCtrlAltDel: () => void;
   onDisconnect: () => void;
 }
 
 export default function MobileToolbar({
-  onKeyboard,
   onSettings,
   onCtrlAltDel,
   onDisconnect,
 }: MobileToolbarProps) {
   return (
-    <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 pb-[env(safe-area-inset-bottom)] pointer-events-none">
+    <div className="md:hidden fixed bottom-0 left-0 right-0 z-40 pb-[env(safe-area-inset-bottom)] pointer-events-none">
       <div className="glass rounded-none border-x-0 border-b-0 flex items-center justify-around py-3 px-2 pointer-events-auto">
-        <MobileButton icon="⌨" label="Keys" onClick={onKeyboard} />
         <MobileButton icon="⚙" label="Settings" onClick={onSettings} />
         <MobileButton icon="⌘" label="CAD" onClick={onCtrlAltDel} />
         <MobileButton icon="✕" label="Exit" onClick={onDisconnect} />

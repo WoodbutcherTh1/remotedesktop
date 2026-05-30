@@ -2,13 +2,14 @@
 """RemoteDesk desktop agent — cross-platform screen capture and input relay."""
 
 import asyncio
-import base64
 import hashlib
 import io
 import json
 import logging
 import os
+import struct
 import sys
+import threading
 import time
 from typing import Any
 
@@ -24,11 +25,10 @@ load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [agent] %(message)s')
 log = logging.getLogger(__name__)
 
-RELAY_URL = os.getenv('RELAY_URL', 'ws://localhost:8080')
-SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'dev-token-change-me')
-
-CAPTURE_INTERVAL = 0.1
-FULL_FRAME_INTERVAL = 2.0
+RELAY_URL = os.getenv('RELAY_URL', 'wss://remotedesktop-production-fd00.up.railway.app')
+SECRET_TOKEN = os.getenv('SECRET_TOKEN', 'test1234')
+CAPTURE_INTERVAL = 0.05
+FULL_FRAME_INTERVAL = 1.0
 PING_INTERVAL = 5.0
 BLOCK_SIZE = 32
 DEFAULT_QUALITY = 75
@@ -36,6 +36,8 @@ MIN_QUALITY = 50
 MAX_QUALITY = 85
 LATENCY_HIGH_MS = 200
 LATENCY_LOW_MS = 100
+FRAME_MAGIC = 0xFD
+FRAME_QUEUE_MAX = 30
 
 mouse = MouseController()
 keyboard = KeyboardController()
@@ -47,7 +49,7 @@ KEY_MAP = {
     'left': Key.left, 'right': Key.right,
     'home': Key.home, 'end': Key.end,
     'pageup': Key.page_up, 'pagedown': Key.page_down,
-    'insert': Key.insert, 'caps_lock': Key.caps_lock,
+    'caps_lock': Key.caps_lock,
     'f1': Key.f1, 'f2': Key.f2, 'f3': Key.f3, 'f4': Key.f4,
     'f5': Key.f5, 'f6': Key.f6, 'f7': Key.f7, 'f8': Key.f8,
     'f9': Key.f9, 'f10': Key.f10, 'f11': Key.f11, 'f12': Key.f12,
@@ -115,11 +117,11 @@ class ScreenCapture:
                 merged.append(rect)
         return merged
 
-    def encode_jpeg(self, img: Image.Image, quality: int | None = None) -> str:
+    def encode_jpeg_bytes(self, img: Image.Image, quality: int | None = None) -> bytes:
         q = quality if quality is not None else self.quality
         buf = io.BytesIO()
         img.save(buf, format='JPEG', quality=q, optimize=True)
-        return base64.b64encode(buf.getvalue()).decode('ascii')
+        return buf.getvalue()
 
     def adjust_quality(self) -> None:
         if self.latency_ms > LATENCY_HIGH_MS:
@@ -129,24 +131,17 @@ class ScreenCapture:
         else:
             self.quality = DEFAULT_QUALITY
 
-    def build_frame_message(self, img: Image.Image, force_full: bool = False) -> dict[str, Any] | None:
+    def build_binary_frame(self, img: Image.Image, force_full: bool = False) -> bytes | None:
         now = time.time()
         current_hash = self.frame_hash(img)
+        timestamp = int(now * 1000) & 0xFFFFFFFF
 
         if force_full or (now - self.last_full_frame) >= FULL_FRAME_INTERVAL:
             self.last_full_frame = now
             self.prev_hash = current_hash
             self.prev_image = img.copy()
-            return {
-                'type': 'frame',
-                'mode': 'full',
-                'width': img.width,
-                'height': img.height,
-                'rects': [{'x': 0, 'y': 0, 'w': img.width, 'h': img.height,
-                           'data': self.encode_jpeg(img)}],
-                'timestamp': int(now * 1000),
-                'quality': self.quality,
-            }
+            jpeg = self.encode_jpeg_bytes(img)
+            return self._pack_frame('full', img.width, img.height, timestamp, [(0, 0, img.width, img.height, jpeg)])
 
         if self.prev_hash == current_hash:
             return None
@@ -154,16 +149,8 @@ class ScreenCapture:
         if self.prev_image is None:
             self.prev_hash = current_hash
             self.prev_image = img.copy()
-            return {
-                'type': 'frame',
-                'mode': 'full',
-                'width': img.width,
-                'height': img.height,
-                'rects': [{'x': 0, 'y': 0, 'w': img.width, 'h': img.height,
-                           'data': self.encode_jpeg(img)}],
-                'timestamp': int(now * 1000),
-                'quality': self.quality,
-            }
+            jpeg = self.encode_jpeg_bytes(img)
+            return self._pack_frame('full', img.width, img.height, timestamp, [(0, 0, img.width, img.height, jpeg)])
 
         dirty = self.find_dirty_rects(self.prev_image, img)
         self.prev_hash = current_hash
@@ -172,20 +159,30 @@ class ScreenCapture:
         if not dirty:
             return None
 
-        rects = []
+        rects: list[tuple[int, int, int, int, bytes]] = []
         for x, y, w, h in dirty:
             patch = img.crop((x, y, x + w, y + h))
-            rects.append({'x': x, 'y': y, 'w': w, 'h': h, 'data': self.encode_jpeg(patch)})
+            rects.append((x, y, w, h, self.encode_jpeg_bytes(patch)))
 
-        return {
-            'type': 'frame',
-            'mode': 'dirty',
-            'width': img.width,
-            'height': img.height,
-            'rects': rects,
-            'timestamp': int(now * 1000),
-            'quality': self.quality,
-        }
+        return self._pack_frame('dirty', img.width, img.height, timestamp, rects)
+
+    def _pack_frame(
+        self,
+        mode: str,
+        width: int,
+        height: int,
+        timestamp: int,
+        rects: list[tuple[int, int, int, int, bytes]],
+    ) -> bytes:
+        mode_byte = 0 if mode == 'full' else 1
+        header = struct.pack('>BBIIIH', FRAME_MAGIC, mode_byte, width, height, timestamp, self.quality)
+        header += struct.pack('>H', len(rects))
+        buf = bytearray(header)
+        for x, y, w, h, jpeg in rects:
+            buf += struct.pack('>IIII', x, y, w, h)
+            buf += struct.pack('>I', len(jpeg))
+            buf += jpeg
+        return bytes(buf)
 
 
 def resolve_key(key: str):
@@ -278,6 +275,31 @@ def execute_command(cmd: dict[str, Any]) -> None:
         log.error('Command error (%s): %s', action, exc)
 
 
+class FrameBridge:
+    """Thread-safe bridge from capture thread to asyncio send loop."""
+
+    def __init__(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+        self._queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=FRAME_QUEUE_MAX)
+
+    def put_frame(self, data: bytes) -> None:
+        def _enqueue() -> None:
+            if self._queue.full():
+                try:
+                    self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    pass
+            try:
+                self._queue.put_nowait(data)
+            except asyncio.QueueFull:
+                pass
+
+        self._loop.call_soon_threadsafe(_enqueue)
+
+    async def get_frame(self) -> bytes:
+        return await self._queue.get()
+
+
 class RemoteAgent:
     def __init__(self) -> None:
         self.capture = ScreenCapture()
@@ -285,6 +307,7 @@ class RemoteAgent:
         self.running = True
         self.backoff = 1.0
         self.max_backoff = 30.0
+        self._capture_stop = threading.Event()
 
     async def authenticate(self, ws) -> bool:
         await ws.send(json.dumps({'type': 'auth', 'role': 'agent', 'token': SECRET_TOKEN}))
@@ -299,19 +322,35 @@ class RemoteAgent:
             log.error('Auth timeout')
         return False
 
-    async def capture_loop(self, ws) -> None:
-        while self.running:
+    def _capture_worker(self, bridge: FrameBridge) -> None:
+        while not self._capture_stop.is_set():
+            loop_start = time.time()
             try:
                 img = self.capture.capture_raw()
-                msg = self.capture.build_frame_message(img)
-                if msg:
-                    await ws.send(json.dumps(msg))
+                frame = self.capture.build_binary_frame(img)
+                if frame:
+                    bridge.put_frame(frame)
+            except Exception as exc:
+                log.error('Capture error: %s', exc)
+            elapsed = time.time() - loop_start
+            sleep_time = max(0.0, CAPTURE_INTERVAL - elapsed)
+            if sleep_time > 0:
+                self._capture_stop.wait(sleep_time)
+
+    async def send_loop(self, ws, bridge: FrameBridge) -> None:
+        while self.running:
+            try:
+                frame = await asyncio.wait_for(bridge.get_frame(), timeout=1.0)
+                await ws.send(frame)
+            except asyncio.TimeoutError:
+                continue
             except websockets.exceptions.ConnectionClosed:
                 break
-            await asyncio.sleep(CAPTURE_INTERVAL)
 
     async def receive_loop(self, ws) -> None:
         async for raw in ws:
+            if isinstance(raw, bytes):
+                continue
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
@@ -336,14 +375,27 @@ class RemoteAgent:
             self.backoff = 1.0
             self.ws = ws
 
+            loop = asyncio.get_running_loop()
+            bridge = FrameBridge(loop)
+            self._capture_stop.clear()
+            capture_thread = threading.Thread(
+                target=self._capture_worker,
+                args=(bridge,),
+                daemon=True,
+                name='capture',
+            )
+            capture_thread.start()
+
             ping_task = asyncio.create_task(self._ping_loop_safe(ws))
-            capture_task = asyncio.create_task(self.capture_loop(ws))
+            send_task = asyncio.create_task(self.send_loop(ws, bridge))
             receive_task = asyncio.create_task(self.receive_loop(ws))
 
             done, pending = await asyncio.wait(
-                [ping_task, capture_task, receive_task],
+                [ping_task, send_task, receive_task],
                 return_when=asyncio.FIRST_COMPLETED,
             )
+            self._capture_stop.set()
+            capture_thread.join(timeout=2.0)
             for task in pending:
                 task.cancel()
             for task in done:

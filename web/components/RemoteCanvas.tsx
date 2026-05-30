@@ -1,9 +1,15 @@
 'use client';
 
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
 import { useMouseHandler } from '@/hooks/useMouseHandler';
 import TouchHandler from './TouchHandler';
+
+function latencyColorClass(latency: number): string {
+  if (latency < 100) return 'text-emerald-400';
+  if (latency <= 300) return 'text-amber-400';
+  return 'text-red-400';
+}
 
 interface RemoteCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -35,15 +41,23 @@ export default function RemoteCanvas({
   hasReceivedFrame,
 }: RemoteCanvasProps) {
   const [zoom, setZoom] = useState(1);
-  const { cursorPos, handleMouseMove, handleMouseDown, handleMouseUp, handleDoubleClick, handleWheel, handleContextMenu, mapCoords } =
-    useMouseHandler({
-      canvasRef,
-      settings,
-      remoteWidth,
-      remoteHeight,
-      sendCommand,
-      scaleMode: settings.display.scaleMode,
-    });
+  const {
+    cursorPos,
+    handlePointerMove,
+    handlePointerDown,
+    handlePointerUp,
+    handleDoubleClick,
+    handleWheel,
+    handleContextMenu,
+    mapCoords,
+  } = useMouseHandler({
+    canvasRef,
+    settings,
+    remoteWidth,
+    remoteHeight,
+    sendCommand,
+    scaleMode: settings.display.scaleMode,
+  });
 
   const cursorStyleMap: Record<string, string> = {
     default: 'default',
@@ -63,15 +77,15 @@ export default function RemoteCanvas({
       >
         <canvas
           ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-          className="block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08]"
+          className="remote-canvas block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08]"
           style={{
             cursor: settings.mouse.showLocalCursor
               ? cursorStyleMap[settings.mouse.cursorStyle]
               : 'none',
           }}
-          onMouseMove={handleMouseMove}
-          onMouseDown={handleMouseDown}
-          onMouseUp={handleMouseUp}
+          onPointerMove={handlePointerMove}
+          onPointerDown={handlePointerDown}
+          onPointerUp={handlePointerUp}
           onDoubleClick={handleDoubleClick}
           onWheel={handleWheel}
           onContextMenu={handleContextMenu}
@@ -115,15 +129,18 @@ export default function RemoteCanvas({
         zoom={zoom}
       />
 
-      <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] text-zinc-400 pointer-events-none">
-        #{frameCount} · {fps} FPS
+      <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
+        <span className={latencyColorClass(latency)}>{latency}ms</span>
+        <span className="text-zinc-500"> · </span>
+        <span className="text-zinc-300">{fps} FPS</span>
+        <span className="text-zinc-500"> · #{frameCount}</span>
       </div>
 
       {showStats && (
         <div className="absolute top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5">
           <div>Frames: {frameCount}</div>
-          <div>FPS: {fps}</div>
-          <div>Latency: {latency}ms</div>
+          <div>Rendered FPS: {fps}</div>
+          <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Resolution: {remoteWidth}×{remoteHeight}</div>
           <div>Scale: {settings.display.scaleMode}</div>
         </div>

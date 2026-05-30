@@ -90,3 +90,9 @@ select {
   color: #a78bfa;
   border-bottom: 2px solid #7c3aed;
 }
+
+canvas.remote-canvas {
+  image-rendering: optimizeSpeed;
+  transition: none !important;
+  animation: none !important;
+}

@@ -1,7 +1,6 @@
 'use client';
 
 import { useCallback, useRef, useState } from 'react';
-import { MOUSE_MOVE_MAX_HZ } from '@/lib/constants';
 import { RemoteSettings } from '@/lib/settings-store';
 
 interface UseMouseHandlerOptions {
@@ -22,9 +21,7 @@ export function useMouseHandler({
   scaleMode,
 }: UseMouseHandlerOptions) {
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
-  const lastMoveRef = useRef(0);
   const isDraggingRef = useRef(false);
-  const dragStartRef = useRef<{ x: number; y: number } | null>(null);
   const relativePosRef = useRef({ x: 0, y: 0 });
 
   const mapCoords = useCallback(
@@ -61,19 +58,8 @@ export function useMouseHandler({
     [canvasRef, remoteWidth, remoteHeight, scaleMode],
   );
 
-  const throttledMove = useCallback(
-    (x: number, y: number) => {
-      const now = Date.now();
-      const minInterval = 1000 / MOUSE_MOVE_MAX_HZ;
-      if (now - lastMoveRef.current < minInterval) return;
-      lastMoveRef.current = now;
-      sendCommand('mouse_move', { x, y });
-    },
-    [sendCommand],
-  );
-
-  const handleMouseMove = useCallback(
-    (e: React.MouseEvent) => {
+  const handlePointerMove = useCallback(
+    (e: React.PointerEvent) => {
       const { mouse } = settings;
       if (mouse.mode === 'relative') {
         relativePosRef.current.x += e.movementX;
@@ -81,7 +67,7 @@ export function useMouseHandler({
         relativePosRef.current.x = Math.max(0, Math.min(remoteWidth - 1, relativePosRef.current.x));
         relativePosRef.current.y = Math.max(0, Math.min(remoteHeight - 1, relativePosRef.current.y));
         if (mouse.showRemoteCursor) setCursorPos({ ...relativePosRef.current });
-        throttledMove(relativePosRef.current.x, relativePosRef.current.y);
+        sendCommand('mouse_move', { x: relativePosRef.current.x, y: relativePosRef.current.y });
         return;
       }
 
@@ -92,14 +78,14 @@ export function useMouseHandler({
       if (isDraggingRef.current && mouse.dragEnabled) {
         sendCommand('mouse_drag', coords);
       } else {
-        throttledMove(coords.x, coords.y);
+        sendCommand('mouse_move', coords);
       }
     },
-    [settings, mapCoords, throttledMove, sendCommand, remoteWidth, remoteHeight],
+    [settings, mapCoords, sendCommand, remoteWidth, remoteHeight],
   );
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
+  const handlePointerDown = useCallback(
+    (e: React.PointerEvent) => {
       const coords = mapCoords(e.clientX, e.clientY);
       if (!coords) return;
 
@@ -119,15 +105,14 @@ export function useMouseHandler({
       });
 
       if (settings.mouse.dragEnabled) {
-        dragStartRef.current = coords;
         isDraggingRef.current = true;
       }
     },
     [mapCoords, sendCommand, settings],
   );
 
-  const handleMouseUp = useCallback(
-    (e: React.MouseEvent) => {
+  const handlePointerUp = useCallback(
+    (e: React.PointerEvent) => {
       const isRight =
         e.button === 2 ||
         (settings.mouse.ctrlClickAsRightClick && (e.ctrlKey || e.metaKey));
@@ -136,7 +121,6 @@ export function useMouseHandler({
         pressed: false,
       });
       isDraggingRef.current = false;
-      dragStartRef.current = null;
     },
     [sendCommand, settings],
   );
@@ -183,9 +167,9 @@ export function useMouseHandler({
 
   return {
     cursorPos,
-    handleMouseMove,
-    handleMouseDown,
-    handleMouseUp,
+    handlePointerMove,
+    handlePointerDown,
+    handlePointerUp,
     handleDoubleClick,
     handleWheel,
     handleContextMenu,

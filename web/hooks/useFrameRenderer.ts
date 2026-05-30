@@ -1,8 +1,10 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FrameMessage } from '@/lib/constants';
+import { BinaryFrame } from '@/lib/frame-protocol';
 import { ColorMode, RemoteSettings } from '@/lib/settings-store';
+
+type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
 
 interface FrameRendererState {
   fps: number;
@@ -10,18 +12,27 @@ interface FrameRendererState {
   lastFrameTime: number;
 }
 
-async function decodeRect(
-  rect: FrameMessage['rects'][number],
-): Promise<ImageBitmap | null> {
+async function decodeRectJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
   try {
-    const binary = atob(rect.data);
-    const bytes = new Uint8Array(binary.length);
-    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-    const blob = new Blob([bytes], { type: 'image/jpeg' });
+    const blob = new Blob([jpeg as BlobPart], { type: 'image/jpeg' });
     return await createImageBitmap(blob);
   } catch {
     return null;
   }
+}
+
+function createBufferCanvas(width: number, height: number): CanvasBuffer {
+  if (typeof OffscreenCanvas !== 'undefined') {
+    return new OffscreenCanvas(width, height);
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
+}
+
+function get2dContext(buffer: CanvasBuffer): CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null {
+  return buffer.getContext('2d', { alpha: false, desynchronized: true });
 }
 
 export function useFrameRenderer(
@@ -33,9 +44,8 @@ export function useFrameRenderer(
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
-  const bufferRef = useRef<HTMLCanvasElement | null>(null);
-  const frameQueueRef = useRef<FrameMessage[]>([]);
-  const processingRef = useRef(false);
+  const bufferRef = useRef<CanvasBuffer | null>(null);
+  const renderSeqRef = useRef(0);
   const statsRef = useRef<FrameRendererState>({ fps: 0, frameCount: 0, lastFrameTime: performance.now() });
 
   useEffect(() => {
@@ -55,7 +65,7 @@ export function useFrameRenderer(
   }, []);
 
   const presentBuffer = useCallback(
-    (canvas: HTMLCanvasElement, buffer: HTMLCanvasElement) => {
+    (canvas: HTMLCanvasElement, buffer: CanvasBuffer) => {
       if (canvas.width !== buffer.width || canvas.height !== buffer.height) {
         canvas.width = buffer.width;
         canvas.height = buffer.height;
@@ -68,46 +78,60 @@ export function useFrameRenderer(
       if (!ctx) return;
 
       applyColorMode(ctx, settings.display.colorMode);
-      ctx.drawImage(buffer, 0, 0);
+      ctx.drawImage(buffer as CanvasImageSource, 0, 0);
     },
     [applyColorMode, settings.display.hardwareAcceleration],
   );
 
-  const processOneFrame = useCallback(
-    async (frame: FrameMessage) => {
+  const renderFrame = useCallback(
+    async (frame: BinaryFrame) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
+      const seq = ++renderSeqRef.current;
+
       if (!bufferRef.current) {
-        bufferRef.current = document.createElement('canvas');
+        bufferRef.current = createBufferCanvas(frame.width, frame.height);
       }
       const buffer = bufferRef.current;
-      const bufferCtx = buffer.getContext('2d');
+      const bufferCtx = get2dContext(buffer);
       if (!bufferCtx) return;
 
       const sizeChanged = buffer.width !== frame.width || buffer.height !== frame.height;
       if (sizeChanged) {
-        buffer.width = frame.width;
-        buffer.height = frame.height;
+        bufferRef.current = createBufferCanvas(frame.width, frame.height);
+        const newBuffer = bufferRef.current;
+        const newCtx = get2dContext(newBuffer);
+        if (!newCtx) return;
+        newCtx.fillStyle = '#000';
+        newCtx.fillRect(0, 0, frame.width, frame.height);
         setDimensions({ width: frame.width, height: frame.height });
       }
 
-      if (frame.mode === 'full') {
-        bufferCtx.fillStyle = '#000';
-        bufferCtx.fillRect(0, 0, buffer.width, buffer.height);
-      } else if (sizeChanged) {
-        bufferCtx.fillStyle = '#000';
-        bufferCtx.fillRect(0, 0, buffer.width, buffer.height);
+      const activeBuffer = bufferRef.current!;
+      const activeCtx = get2dContext(activeBuffer)!;
+
+      if (frame.mode === 'full' || sizeChanged) {
+        activeCtx.fillStyle = '#000';
+        activeCtx.fillRect(0, 0, frame.width, frame.height);
       }
 
-      for (const rect of frame.rects) {
-        const bitmap = await decodeRect(rect);
+      const bitmaps = await Promise.all(frame.rects.map((rect) => decodeRectJpeg(rect.jpeg)));
+
+      if (seq !== renderSeqRef.current) {
+        bitmaps.forEach((bitmap) => bitmap?.close());
+        return;
+      }
+
+      for (let i = 0; i < frame.rects.length; i++) {
+        const bitmap = bitmaps[i];
+        const rect = frame.rects[i];
         if (!bitmap) continue;
-        bufferCtx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+        activeCtx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
         bitmap.close();
       }
 
-      presentBuffer(canvas, buffer);
+      presentBuffer(canvas, activeBuffer);
       setHasReceivedFrame(true);
 
       const now = performance.now();
@@ -124,26 +148,6 @@ export function useFrameRenderer(
     [canvasRef, presentBuffer],
   );
 
-  const drainQueue = useCallback(async () => {
-    if (processingRef.current) return;
-    processingRef.current = true;
-
-    while (frameQueueRef.current.length > 0) {
-      const frame = frameQueueRef.current.shift()!;
-      await processOneFrame(frame);
-    }
-
-    processingRef.current = false;
-  }, [processOneFrame]);
-
-  const queueFrame = useCallback(
-    (frame: FrameMessage) => {
-      frameQueueRef.current.push(frame);
-      void drainQueue();
-    },
-    [drainQueue],
-  );
-
   const takeScreenshot = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas || canvas.width === 0) return;
@@ -153,5 +157,5 @@ export function useFrameRenderer(
     link.click();
   }, [canvasRef]);
 
-  return { fps, frameCount, dimensions, hasReceivedFrame, queueFrame, takeScreenshot };
+  return { fps, frameCount, dimensions, hasReceivedFrame, renderFrame, takeScreenshot };
 }
