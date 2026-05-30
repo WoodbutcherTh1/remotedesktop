@@ -7,6 +7,7 @@ import TouchHandler from './TouchHandler';
 
 interface RemoteCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  containerRef: React.RefObject<HTMLDivElement>;
   settings: RemoteSettings;
   remoteWidth: number;
   remoteHeight: number;
@@ -14,10 +15,13 @@ interface RemoteCanvasProps {
   showStats: boolean;
   fps: number;
   latency: number;
+  connected: boolean;
+  hasReceivedFrame: boolean;
 }
 
 export default function RemoteCanvas({
   canvasRef,
+  containerRef,
   settings,
   remoteWidth,
   remoteHeight,
@@ -25,8 +29,9 @@ export default function RemoteCanvas({
   showStats,
   fps,
   latency,
+  connected,
+  hasReceivedFrame,
 }: RemoteCanvasProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const { cursorPos, handleMouseMove, handleMouseDown, handleMouseUp, handleDoubleClick, handleWheel, handleContextMenu, mapCoords } =
     useMouseHandler({
@@ -45,33 +50,22 @@ export default function RemoteCanvas({
     pointer: 'pointer',
   };
 
-  const containerClass =
-    settings.display.scaleMode === 'fit'
-      ? 'flex items-center justify-center w-full h-full'
-      : settings.display.scaleMode === 'original'
-        ? 'overflow-auto'
-        : 'flex items-stretch w-full h-full';
-
   return (
     <div
       ref={containerRef}
-      className={`fixed inset-0 z-0 w-screen h-[100dvh] md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto bg-black md:bg-background overflow-hidden ${containerClass}`}
+      className="fixed inset-0 z-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-black md:relative md:inset-auto md:flex-1 md:w-auto md:h-auto md:bg-background"
     >
       <div
-        className="relative max-w-full max-h-full"
+        className="relative w-full h-full"
         style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
       >
         <canvas
           ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-          className="bg-black block border-0 md:border md:border-white/[0.08]"
+          className="block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08]"
           style={{
             cursor: settings.mouse.showLocalCursor
               ? cursorStyleMap[settings.mouse.cursorStyle]
               : 'none',
-            maxWidth: settings.display.scaleMode === 'fit' ? '100%' : undefined,
-            maxHeight: settings.display.scaleMode === 'fit' ? '100%' : undefined,
-            width: settings.display.scaleMode === 'stretch' ? '100%' : undefined,
-            height: settings.display.scaleMode === 'stretch' ? '100%' : undefined,
           }}
           onMouseMove={handleMouseMove}
           onMouseDown={handleMouseDown}
@@ -103,6 +97,12 @@ export default function RemoteCanvas({
           </div>
         )}
       </div>
+
+      {connected && !hasReceivedFrame && (
+        <div className="absolute inset-0 z-20 flex items-center justify-center pointer-events-none">
+          <p className="text-sm text-zinc-400">Waiting for screen...</p>
+        </div>
+      )}
 
       <TouchHandler
         canvasRef={canvasRef}

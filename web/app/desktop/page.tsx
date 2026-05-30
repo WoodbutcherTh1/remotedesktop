@@ -18,6 +18,7 @@ import { ScaleMode } from '@/lib/settings-store';
 export default function DesktopPage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSettings, setMobileSettings] = useState(false);
@@ -57,7 +58,12 @@ export default function DesktopPage() {
       },
     });
 
-  const { fps, dimensions, queueFrame, takeScreenshot } = useFrameRenderer(canvasRef, settings);
+  const { fps, dimensions, hasReceivedFrame, queueFrame, takeScreenshot } = useFrameRenderer(
+    canvasRef,
+    canvasContainerRef,
+    settings,
+    status === 'connected',
+  );
   queueFrameRef.current = queueFrame;
 
   const { sendKeyCombo } = useKeyboardHandler({
@@ -150,7 +156,7 @@ export default function DesktopPage() {
   return (
     <div
       ref={containerRef}
-      className="fixed inset-0 w-screen h-[100dvh] md:relative md:inset-auto md:w-auto md:h-screen flex flex-col bg-background overflow-hidden"
+      className="fixed inset-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden md:relative md:inset-auto md:w-auto md:h-screen flex flex-col bg-background"
     >
       <div className="hidden md:block">
         <TopBar
@@ -183,6 +189,7 @@ export default function DesktopPage() {
 
       <RemoteCanvas
         canvasRef={canvasRef}
+        containerRef={canvasContainerRef}
         settings={settings}
         remoteWidth={width}
         remoteHeight={height}
@@ -190,6 +197,8 @@ export default function DesktopPage() {
         showStats={settings.display.showStatsOverlay}
         fps={fps}
         latency={latency}
+        connected={status === 'connected'}
+        hasReceivedFrame={hasReceivedFrame}
       />
 
       <MobileToolbar

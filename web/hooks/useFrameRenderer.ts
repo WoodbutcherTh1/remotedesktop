@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FrameMessage } from '@/lib/constants';
-import { ColorMode, RemoteSettings } from '@/lib/settings-store';
+import { ColorMode, RemoteSettings, ScaleMode } from '@/lib/settings-store';
 
 interface FrameRendererState {
   fps: number;
@@ -10,17 +10,60 @@ interface FrameRendererState {
   lastFrameTime: number;
 }
 
+function drawToDisplayCanvas(
+  ctx: CanvasRenderingContext2D,
+  source: CanvasImageSource,
+  srcW: number,
+  srcH: number,
+  destW: number,
+  destH: number,
+  scaleMode: ScaleMode,
+) {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, destW, destH);
+
+  if (srcW === 0 || srcH === 0) return;
+
+  if (scaleMode === 'stretch') {
+    ctx.drawImage(source, 0, 0, srcW, srcH, 0, 0, destW, destH);
+    return;
+  }
+
+  if (scaleMode === 'original') {
+    const x = Math.max(0, (destW - srcW) / 2);
+    const y = Math.max(0, (destH - srcH) / 2);
+    ctx.drawImage(source, 0, 0, srcW, srcH, x, y, srcW, srcH);
+    return;
+  }
+
+  const scale = Math.min(destW / srcW, destH / srcH);
+  const drawW = srcW * scale;
+  const drawH = srcH * scale;
+  const drawX = (destW - drawW) / 2;
+  const drawY = (destH - drawH) / 2;
+  ctx.drawImage(source, 0, 0, srcW, srcH, drawX, drawY, drawW, drawH);
+}
+
 export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
+  containerRef: React.RefObject<HTMLDivElement>,
   settings: RemoteSettings,
+  connected: boolean,
 ) {
   const [fps, setFps] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
-  const frameBufferRef = useRef<ImageBitmap | null>(null);
+  const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
+  const bufferRef = useRef<HTMLCanvasElement | null>(null);
   const pendingFrameRef = useRef<FrameMessage | null>(null);
   const rafRef = useRef<number | null>(null);
   const statsRef = useRef<FrameRendererState>({ fps: 0, frameCount: 0, lastFrameTime: performance.now() });
   const lastRenderRef = useRef(0);
+
+  useEffect(() => {
+    if (!connected) {
+      setHasReceivedFrame(false);
+    }
+  }, [connected]);
 
   const applyColorMode = useCallback((ctx: CanvasRenderingContext2D, mode: ColorMode) => {
     if (mode === 'grayscale') {
@@ -46,17 +89,16 @@ export function useFrameRenderer(
     }
     lastRenderRef.current = now;
 
-    const ctx = canvas.getContext('2d', {
-      alpha: false,
-      desynchronized: settings.display.hardwareAcceleration,
-    });
-    if (!ctx) return;
+    if (!bufferRef.current) {
+      bufferRef.current = document.createElement('canvas');
+    }
+    const buffer = bufferRef.current;
+    const bufferCtx = buffer.getContext('2d');
+    if (!bufferCtx) return;
 
-    applyColorMode(ctx, settings.display.colorMode);
-
-    if (frame.mode === 'full' || canvas.width !== frame.width || canvas.height !== frame.height) {
-      canvas.width = frame.width;
-      canvas.height = frame.height;
+    if (frame.mode === 'full' || buffer.width !== frame.width || buffer.height !== frame.height) {
+      buffer.width = frame.width;
+      buffer.height = frame.height;
       setDimensions({ width: frame.width, height: frame.height });
     }
 
@@ -67,12 +109,38 @@ export function useFrameRenderer(
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         const blob = new Blob([bytes], { type: 'image/jpeg' });
         const bitmap = await createImageBitmap(blob);
-        ctx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
+        bufferCtx.drawImage(bitmap, rect.x, rect.y, rect.w, rect.h);
         bitmap.close();
       } catch {
         // skip corrupt rect
       }
     }
+
+    const container = containerRef.current;
+    const displayW = container?.clientWidth ?? frame.width;
+    const displayH = container?.clientHeight ?? frame.height;
+
+    canvas.width = displayW;
+    canvas.height = displayH;
+
+    const ctx = canvas.getContext('2d', {
+      alpha: false,
+      desynchronized: settings.display.hardwareAcceleration,
+    });
+    if (!ctx) return;
+
+    applyColorMode(ctx, settings.display.colorMode);
+    drawToDisplayCanvas(
+      ctx,
+      buffer,
+      frame.width,
+      frame.height,
+      displayW,
+      displayH,
+      settings.display.scaleMode,
+    );
+
+    setHasReceivedFrame(true);
 
     statsRef.current.frameCount += 1;
     const elapsed = now - statsRef.current.lastFrameTime;
@@ -85,7 +153,7 @@ export function useFrameRenderer(
 
     pendingFrameRef.current = null;
     rafRef.current = requestAnimationFrame(renderFrame);
-  }, [canvasRef, settings.display, applyColorMode]);
+  }, [canvasRef, containerRef, settings.display, applyColorMode]);
 
   const queueFrame = useCallback(
     (frame: FrameMessage) => {
@@ -100,7 +168,6 @@ export function useFrameRenderer(
   useEffect(() => {
     return () => {
       if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
-      frameBufferRef.current?.close();
     };
   }, []);
 
@@ -113,5 +180,5 @@ export function useFrameRenderer(
     link.click();
   }, [canvasRef]);
 
-  return { fps, dimensions, queueFrame, takeScreenshot };
+  return { fps, dimensions, hasReceivedFrame, queueFrame, takeScreenshot };
 }
