@@ -15,7 +15,7 @@ import { useKeyboardHandler } from '@/hooks/useKeyboardHandler';
 import { useSettings } from '@/hooks/useSettings';
 import { DEFAULT_RELAY_URL, STORAGE_KEYS } from '@/lib/constants';
 import { BinaryFrame } from '@/lib/frame-protocol';
-import { isMobileViewport, ScaleMode } from '@/lib/settings-store';
+import { isMobileViewport, loadSettings, saveSettings, ScaleMode } from '@/lib/settings-store';
 import { ViewState } from '@/lib/view-transform';
 
 export default function DesktopPage() {
@@ -47,6 +47,14 @@ export default function DesktopPage() {
     }
     setToken(storedToken);
     setRelayUrl(storedRelay || DEFAULT_RELAY_URL);
+
+    if (isMobileViewport()) {
+      const s = loadSettings();
+      if (s.display.scaleMode !== 'fit') {
+        s.display.scaleMode = 'fit';
+        saveSettings(s);
+      }
+    }
   }, [router]);
 
   const renderFrameRef = useRef<(f: BinaryFrame) => void>(() => {});
@@ -68,6 +76,7 @@ export default function DesktopPage() {
     frameCount,
     dimensions,
     hasReceivedFrame,
+    paintMetrics,
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,
@@ -199,6 +208,7 @@ export default function DesktopPage() {
         latency={latency}
         connected={status === 'connected'}
         hasReceivedFrame={hasReceivedFrame}
+        paintMetrics={paintMetrics}
         onCanvasMount={initializeDisplayCanvas}
       />
 

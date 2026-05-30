@@ -29,7 +29,7 @@ export interface DestRect {
 
 import { getClientViewport } from './client-viewport';
 
-/** CSS pixel viewport size (visualViewport on iOS Safari). */
+/** CSS pixel viewport size (layout viewport — matches 100vw/100dvh). */
 export function getVisualViewportCssSize(): { width: number; height: number } {
   const { width, height } = getClientViewport();
   return { width, height };

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { resizeDisplayCanvas } from '@/lib/client-viewport';
-import { ColorMode, RemoteSettings, ScaleMode } from '@/lib/settings-store';
+import { ColorMode, isMobileViewport, RemoteSettings, ScaleMode } from '@/lib/settings-store';
 import { VIEW_BACKGROUND } from '@/lib/view-transform';
 
 type CanvasBuffer = HTMLCanvasElement | OffscreenCanvas;
@@ -12,6 +12,15 @@ interface FrameRendererState {
   fps: number;
   frameCount: number;
   lastFrameTime: number;
+}
+
+export interface PaintMetrics {
+  w: number;
+  h: number;
+  drawW: number;
+  drawH: number;
+  x: number;
+  y: number;
 }
 
 async function decodeJpeg(jpeg: Uint8Array): Promise<ImageBitmap | null> {
@@ -94,18 +103,20 @@ function drawFrame(
   clientH: number,
   dpr: number,
   scaleMode: ScaleMode,
-): void {
+): PaintMetrics {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = VIEW_BACKGROUND;
   ctx.fillRect(0, 0, clientW, clientH);
 
-  if (!offscreen || remoteW <= 0 || remoteH <= 0) return;
+  if (!offscreen || remoteW <= 0 || remoteH <= 0) {
+    return { w: clientW, h: clientH, drawW: 0, drawH: 0, x: 0, y: 0 };
+  }
 
   applyHighQualitySmoothing(ctx);
 
   if (scaleMode === 'stretch') {
     ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, 0, 0, clientW, clientH);
-    return;
+    return { w: clientW, h: clientH, drawW: clientW, drawH: clientH, x: 0, y: 0 };
   }
 
   const scaleX = clientW / remoteW;
@@ -130,6 +141,11 @@ function drawFrame(
   const x = (clientW - drawW) / 2;
   const y = (clientH - drawH) / 2;
   ctx.drawImage(offscreen as CanvasImageSource, 0, 0, remoteW, remoteH, x, y, drawW, drawH);
+  return { w: clientW, h: clientH, drawW, drawH, x, y };
+}
+
+function effectiveScaleMode(settings: RemoteSettings): ScaleMode {
+  return isMobileViewport() ? 'fit' : settings.display.scaleMode;
 }
 
 export function useFrameRenderer(
@@ -141,6 +157,15 @@ export function useFrameRenderer(
   const [frameCount, setFrameCount] = useState(0);
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
   const [hasReceivedFrame, setHasReceivedFrame] = useState(false);
+  const paintMetricsRef = useRef<PaintMetrics>({
+    w: 0,
+    h: 0,
+    drawW: 0,
+    drawH: 0,
+    x: 0,
+    y: 0,
+  });
+  const [paintMetrics, setPaintMetrics] = useState<PaintMetrics>(paintMetricsRef.current);
   const offscreenRef = useRef<CanvasBuffer | null>(null);
   const offscreenCtxRef = useRef<CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null>(
     null,
@@ -201,7 +226,25 @@ export function useFrameRenderer(
       if (offscreen && remoteW > 0 && remoteH > 0) {
         applyColorMode(ctx, settingsRef.current.display.colorMode);
       }
-      drawFrame(ctx, offscreen, remoteW, remoteH, clientW, clientH, dpr, settingsRef.current.display.scaleMode);
+      const metrics = drawFrame(
+        ctx,
+        offscreen,
+        remoteW,
+        remoteH,
+        clientW,
+        clientH,
+        dpr,
+        effectiveScaleMode(settingsRef.current),
+      );
+      const prev = paintMetricsRef.current;
+      if (
+        Math.round(metrics.w) !== Math.round(prev.w) ||
+        Math.round(metrics.drawW) !== Math.round(prev.drawW) ||
+        Math.round(metrics.x) !== Math.round(prev.x)
+      ) {
+        paintMetricsRef.current = metrics;
+        setPaintMetrics(metrics);
+      }
     } catch {
       // keep last painted display frame
     }
@@ -356,6 +399,7 @@ export function useFrameRenderer(
     frameCount,
     dimensions,
     hasReceivedFrame,
+    paintMetrics,
     renderFrame,
     takeScreenshot,
     initializeDisplayCanvas,

@@ -1,4 +1,4 @@
-/** Client device viewport (the device the user connects from). */
+/** Layout viewport in CSS pixels — matches 100vw/100dvh, not visualViewport (iOS mismatch). */
 export function getClientViewport(): {
   width: number;
   height: number;
@@ -7,37 +7,21 @@ export function getClientViewport(): {
   if (typeof window === 'undefined') {
     return { width: 0, height: 0, dpr: 1 };
   }
-  const vv = window.visualViewport;
+  const doc = document.documentElement;
   return {
-    width: Math.floor(vv?.width ?? window.innerWidth),
-    height: Math.floor(vv?.height ?? window.innerHeight),
+    width: doc.clientWidth || window.innerWidth,
+    height: doc.clientHeight || window.innerHeight,
     dpr: window.devicePixelRatio || 1,
   };
 }
 
+/** Set canvas backing-store size only; CSS (#remote-display-canvas) controls display size. */
 export function resizeDisplayCanvas(canvas: HTMLCanvasElement): {
   width: number;
   height: number;
   dpr: number;
 } {
   const { width, height, dpr } = getClientViewport();
-
-  canvas.style.position = 'fixed';
-  canvas.style.top = '0';
-  canvas.style.left = '0';
-  canvas.style.right = '0';
-  canvas.style.bottom = '0';
-  canvas.style.width = '100%';
-  canvas.style.height = `${height}px`;
-  canvas.style.margin = '0';
-  canvas.style.padding = '0';
-  canvas.style.border = 'none';
-  canvas.style.display = 'block';
-  canvas.style.maxWidth = 'none';
-  canvas.style.maxHeight = 'none';
-  canvas.style.zIndex = '1';
-  canvas.style.touchAction = 'none';
-  canvas.style.backgroundColor = '#0A0A0F';
 
   const bw = Math.round(width * dpr);
   const bh = Math.round(height * dpr);

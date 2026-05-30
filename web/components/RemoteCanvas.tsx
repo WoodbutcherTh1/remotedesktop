@@ -2,13 +2,14 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { isMobileViewport, RemoteSettings } from '@/lib/settings-store';
+import { getClientViewport } from '@/lib/client-viewport';
 import {
   clampViewOffset,
-  getVisualViewportCssSize,
   mapRemoteToClient,
   ViewState,
   ViewTransform,
 } from '@/lib/view-transform';
+import { PaintMetrics } from '@/hooks/useFrameRenderer';
 import { useMouseHandler } from '@/hooks/useMouseHandler';
 import TouchHandler from './TouchHandler';
 
@@ -31,6 +32,7 @@ interface RemoteCanvasProps {
   latency: number;
   connected: boolean;
   hasReceivedFrame: boolean;
+  paintMetrics: PaintMetrics;
   onCanvasMount?: () => void;
 }
 
@@ -47,6 +49,7 @@ export default function RemoteCanvas({
   latency,
   connected,
   hasReceivedFrame,
+  paintMetrics,
   onCanvasMount,
 }: RemoteCanvasProps) {
   const [viewTransform, setViewTransform] = useState<ViewTransform>({
@@ -67,18 +70,17 @@ export default function RemoteCanvas({
 
   useEffect(() => {
     const readSize = () => {
-      setContainerSize(getVisualViewportCssSize());
+      const { width, height } = getClientViewport();
+      setContainerSize({ width, height });
     };
 
     readSize();
     window.addEventListener('resize', readSize);
     window.visualViewport?.addEventListener('resize', readSize);
-    window.visualViewport?.addEventListener('scroll', readSize);
 
     return () => {
       window.removeEventListener('resize', readSize);
       window.visualViewport?.removeEventListener('resize', readSize);
-      window.visualViewport?.removeEventListener('scroll', readSize);
     };
   }, []);
 
@@ -158,7 +160,7 @@ export default function RemoteCanvas({
   return (
     <>
       <canvas
-        id="display"
+        id="remote-display-canvas"
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
         style={{
           cursor: settings.mouse.showLocalCursor
@@ -215,25 +217,28 @@ export default function RemoteCanvas({
       />
 
       <div className="md:hidden fixed top-2 right-2 z-50 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
-        <span className="text-zinc-500">fill-v3 · </span>
+        <span className="text-zinc-500">fill-v4 · </span>
         <span className={latencyColorClass(latency)}>{latency}ms</span>
         <span className="text-zinc-500"> · </span>
         <span className="text-zinc-300">{fps} FPS</span>
-        <span className="text-zinc-500"> · #{frameCount}</span>
         <span className="text-zinc-500"> · </span>
         <span className="text-zinc-400">
-          {clientViewport.width}×{clientViewport.height}
+          w{paintMetrics.w} dw{Math.round(paintMetrics.drawW)} x{Math.round(paintMetrics.x)}
         </span>
       </div>
 
       {showStats && (
         <div className="fixed top-2 left-2 glass rounded px-3 py-2 font-mono text-xs space-y-0.5 z-50 pointer-events-none">
-          <div>fill-v3</div>
+          <div>fill-v4</div>
           <div>Frames: {frameCount}</div>
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Remote: {remoteWidth}×{remoteHeight}</div>
           <div>Client: {clientViewport.width}×{clientViewport.height}</div>
+          <div>
+            Paint: w{paintMetrics.w} drawW{Math.round(paintMetrics.drawW)} x
+            {Math.round(paintMetrics.x)}
+          </div>
           <div>Scale: {scaleMode}</div>
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
