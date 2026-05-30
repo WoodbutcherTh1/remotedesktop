@@ -2,6 +2,12 @@
 
 import { useCallback, useRef } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
+import {
+  clampViewOffset,
+  clampViewScale,
+  shouldPanOnDrag,
+  ViewTransform,
+} from '@/lib/view-transform';
 
 const TAP_THRESHOLD_PX = 5;
 
@@ -9,23 +15,31 @@ interface TouchHandlerProps {
   settings: RemoteSettings;
   mapCoords: (clientX: number, clientY: number) => { x: number; y: number } | null;
   sendCommand: (action: string, params?: Record<string, unknown>) => boolean;
-  zoom: number;
-  onZoomChange: (zoom: number) => void;
+  viewTransform: ViewTransform;
+  onViewTransformChange: (next: ViewTransform) => void;
+  containerWidth: number;
+  containerHeight: number;
 }
 
 export default function TouchHandler({
   settings,
   mapCoords,
   sendCommand,
-  zoom,
-  onZoomChange,
+  viewTransform,
+  onViewTransformChange,
+  containerWidth,
+  containerHeight,
 }: TouchHandlerProps) {
+  const { scale } = viewTransform;
   const lastTapRef = useRef(0);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const longPressFiredRef = useRef(false);
   const lastPinchDist = useRef(0);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const lastCoordsRef = useRef<{ x: number; y: number } | null>(null);
+  const panStartRef = useRef<{ x: number; y: number; offsetX: number; offsetY: number } | null>(null);
+  const isPanningRef = useRef(false);
+  const isPinchingRef = useRef(false);
 
   const getPointerCoords = useCallback(
     (clientX: number, clientY: number) => mapCoords(clientX, clientY),
@@ -39,9 +53,42 @@ export default function TouchHandler({
     }
   }, []);
 
+  const applyPan = useCallback(
+    (clientX: number, clientY: number) => {
+      const start = panStartRef.current;
+      if (!start) return;
+
+      const dx = clientX - start.x;
+      const dy = clientY - start.y;
+      const clamped = clampViewOffset(
+        start.offsetX + dx,
+        start.offsetY + dy,
+        scale,
+        containerWidth,
+        containerHeight,
+      );
+      onViewTransformChange({ scale, ...clamped });
+    },
+    [containerHeight, containerWidth, onViewTransformChange, scale],
+  );
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.pointerType !== 'touch' || e.isPrimary === false) return;
+      if (e.pointerType !== 'touch' || e.isPrimary === false || isPinchingRef.current) return;
+
+      const panOnDrag = shouldPanOnDrag(scale, settings.mouse.touchMode);
+      isPanningRef.current = panOnDrag;
+
+      if (panOnDrag) {
+        panStartRef.current = {
+          x: e.clientX,
+          y: e.clientY,
+          offsetX: viewTransform.offsetX,
+          offsetY: viewTransform.offsetY,
+        };
+        touchStartRef.current = { x: e.clientX, y: e.clientY };
+        return;
+      }
 
       const coords = getPointerCoords(e.clientX, e.clientY);
       if (!coords) return;
@@ -72,12 +119,18 @@ export default function TouchHandler({
         sendCommand('mouse_click', { button: 'right', pressed: false });
       }, settings.mouse.rightClickLongPress);
     },
-    [getPointerCoords, sendCommand, settings],
+    [getPointerCoords, sendCommand, settings, scale, settings.mouse.touchMode, viewTransform.offsetX, viewTransform.offsetY],
   );
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
-      if (e.pointerType !== 'touch') return;
+      if (e.pointerType !== 'touch' || isPinchingRef.current) return;
+
+      if (isPanningRef.current) {
+        clearLongPressTimer();
+        applyPan(e.clientX, e.clientY);
+        return;
+      }
 
       clearLongPressTimer();
 
@@ -87,7 +140,7 @@ export default function TouchHandler({
 
       sendCommand('mouse_move', coords);
     },
-    [clearLongPressTimer, getPointerCoords, sendCommand],
+    [applyPan, clearLongPressTimer, getPointerCoords, sendCommand],
   );
 
   const handlePointerUp = useCallback(
@@ -95,6 +148,13 @@ export default function TouchHandler({
       if (e.pointerType !== 'touch') return;
 
       clearLongPressTimer();
+
+      if (isPanningRef.current) {
+        isPanningRef.current = false;
+        panStartRef.current = null;
+        touchStartRef.current = null;
+        return;
+      }
 
       if (longPressFiredRef.current) {
         longPressFiredRef.current = false;
@@ -124,12 +184,16 @@ export default function TouchHandler({
   const handleTouchStart = useCallback(
     (e: React.TouchEvent) => {
       if (e.touches.length === 2) {
+        isPinchingRef.current = true;
+        isPanningRef.current = false;
+        panStartRef.current = null;
+        clearLongPressTimer();
         const dx = e.touches[0].clientX - e.touches[1].clientX;
         const dy = e.touches[0].clientY - e.touches[1].clientY;
         lastPinchDist.current = Math.hypot(dx, dy);
       }
     },
-    [],
+    [clearLongPressTimer],
   );
 
   const handleTouchMove = useCallback(
@@ -142,24 +206,39 @@ export default function TouchHandler({
       const dist = Math.hypot(dx, dy);
 
       if (lastPinchDist.current > 0) {
-        const scale = dist / lastPinchDist.current;
-        if (Math.abs(scale - 1) > 0.02) {
-          if (scale > 1) {
-            onZoomChange(Math.min(zoom * 1.05, 3));
-          } else {
-            onZoomChange(Math.max(zoom * 0.95, 0.5));
-          }
+        const pinchScale = dist / lastPinchDist.current;
+        if (Math.abs(pinchScale - 1) > 0.01) {
+          const nextScale = clampViewScale(scale * pinchScale);
+          const clamped = clampViewOffset(
+            viewTransform.offsetX,
+            viewTransform.offsetY,
+            nextScale,
+            containerWidth,
+            containerHeight,
+          );
+          onViewTransformChange({ scale: nextScale, ...clamped });
         }
-
-        const scrollSpeed = settings.mouse.scrollSpeed;
-        sendCommand('mouse_scroll', {
-          dx: 0,
-          dy: Math.sign(dy) * scrollSpeed,
-        });
       }
       lastPinchDist.current = dist;
     },
-    [sendCommand, settings.mouse.scrollSpeed, zoom, onZoomChange],
+    [
+      containerHeight,
+      containerWidth,
+      onViewTransformChange,
+      scale,
+      viewTransform.offsetX,
+      viewTransform.offsetY,
+    ],
+  );
+
+  const handleTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length < 2) {
+        isPinchingRef.current = false;
+        lastPinchDist.current = 0;
+      }
+    },
+    [],
   );
 
   return (
@@ -171,6 +250,8 @@ export default function TouchHandler({
       onPointerCancel={handlePointerUp}
       onTouchStart={handleTouchStart}
       onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onTouchCancel={handleTouchEnd}
     />
   );
 }

@@ -35,6 +35,13 @@ function get2dContext(buffer: CanvasBuffer): CanvasRenderingContext2D | Offscree
   return buffer.getContext('2d', { alpha: false, desynchronized: true });
 }
 
+function applyHighQualitySmoothing(
+  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
+): void {
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+}
+
 export function useFrameRenderer(
   canvasRef: React.RefObject<HTMLCanvasElement | null>,
   settings: RemoteSettings,
@@ -89,6 +96,7 @@ export function useFrameRenderer(
     if (!ctx) return;
 
     try {
+      applyHighQualitySmoothing(ctx);
       applyColorMode(ctx, settingsRef.current.display.colorMode);
       ctx.drawImage(offscreen as CanvasImageSource, 0, 0);
     } catch {
@@ -128,6 +136,7 @@ export function useFrameRenderer(
     }
     offscreenCtxRef.current = ctx;
     try {
+      applyHighQualitySmoothing(ctx);
       ctx.fillStyle = '#000';
       ctx.fillRect(0, 0, width, height);
     } catch {
@@ -149,6 +158,8 @@ export function useFrameRenderer(
 
     const ctx = offscreenCtxRef.current;
     if (!ctx) return;
+
+    applyHighQualitySmoothing(ctx);
 
     if (frame.mode === 'full' || sizeChanged) {
       try {
@@ -226,6 +237,7 @@ export function useFrameRenderer(
     const ctx = canvas.getContext('2d', { alpha: false });
     if (!ctx) return;
     try {
+      applyHighQualitySmoothing(ctx);
       const w = Math.max(canvas.width, 1);
       const h = Math.max(canvas.height, 1);
       ctx.fillStyle = '#000';

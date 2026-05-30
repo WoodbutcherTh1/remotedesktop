@@ -198,6 +198,12 @@ export default function DesktopPage() {
         onSettings={() => setMobileSettings(true)}
         onCtrlAltDel={() => sendCommand('ctrl_alt_del')}
         onDisconnect={handleDisconnect}
+        touchMode={settings.mouse.touchMode}
+        onTouchModeToggle={() =>
+          updateSection('mouse', {
+            touchMode: settings.mouse.touchMode === 'move' ? 'pan' : 'move',
+          })
+        }
       />
 
       <SettingsPanel

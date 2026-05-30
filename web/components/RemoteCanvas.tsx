@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
+import { clampViewOffset, ViewTransform } from '@/lib/view-transform';
 import { useMouseHandler } from '@/hooks/useMouseHandler';
 import TouchHandler from './TouchHandler';
 
@@ -42,11 +43,51 @@ export default function RemoteCanvas({
   hasReceivedFrame,
   onCanvasMount,
 }: RemoteCanvasProps) {
-  const [zoom, setZoom] = useState(1);
+  const [viewTransform, setViewTransform] = useState<ViewTransform>({
+    scale: 1,
+    offsetX: 0,
+    offsetY: 0,
+  });
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
     onCanvasMount?.();
   }, [onCanvasMount]);
+
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node) return;
+
+    const updateSize = () => {
+      setContainerSize({ width: node.clientWidth, height: node.clientHeight });
+    };
+
+    updateSize();
+    const observer = new ResizeObserver(updateSize);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [containerRef]);
+
+  useEffect(() => {
+    if (viewTransform.scale <= 1 && (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)) {
+      setViewTransform((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }));
+    }
+  }, [viewTransform.scale, viewTransform.offsetX, viewTransform.offsetY]);
+
+  const handleViewTransformChange = useCallback(
+    (next: ViewTransform) => {
+      const clamped = clampViewOffset(
+        next.offsetX,
+        next.offsetY,
+        next.scale,
+        containerSize.width,
+        containerSize.height,
+      );
+      setViewTransform({ scale: next.scale, ...clamped });
+    },
+    [containerSize.height, containerSize.width],
+  );
+
   const {
     cursorPos,
     handlePointerMove,
@@ -72,6 +113,8 @@ export default function RemoteCanvas({
     pointer: 'pointer',
   };
 
+  const { scale, offsetX, offsetY } = viewTransform;
+
   return (
     <div
       ref={containerRef}
@@ -79,7 +122,10 @@ export default function RemoteCanvas({
     >
       <div
         className="relative w-full h-full"
-        style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+        style={{
+          transform: `translate(${offsetX}px, ${offsetY}px) scale(${scale})`,
+          transformOrigin: 'center center',
+        }}
       >
         <canvas
           ref={canvasRef as React.RefObject<HTMLCanvasElement>}
@@ -130,8 +176,10 @@ export default function RemoteCanvas({
         settings={settings}
         mapCoords={mapCoords}
         sendCommand={sendCommand}
-        onZoomChange={setZoom}
-        zoom={zoom}
+        viewTransform={viewTransform}
+        onViewTransformChange={handleViewTransformChange}
+        containerWidth={containerSize.width}
+        containerHeight={containerSize.height}
       />
 
       <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
@@ -139,6 +187,12 @@ export default function RemoteCanvas({
         <span className="text-zinc-500"> · </span>
         <span className="text-zinc-300">{fps} FPS</span>
         <span className="text-zinc-500"> · #{frameCount}</span>
+        {scale !== 1 && (
+          <>
+            <span className="text-zinc-500"> · </span>
+            <span className="text-zinc-300">{Math.round(scale * 100)}%</span>
+          </>
+        )}
       </div>
 
       {showStats && (
@@ -148,6 +202,7 @@ export default function RemoteCanvas({
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Resolution: {remoteWidth}×{remoteHeight}</div>
           <div>Scale: {settings.display.scaleMode}</div>
+          <div>Zoom: {scale.toFixed(2)}x</div>
         </div>
       )}
     </div>

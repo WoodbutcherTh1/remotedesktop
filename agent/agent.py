@@ -31,9 +31,9 @@ CAPTURE_INTERVAL = 0.05
 FULL_FRAME_INTERVAL = 1.0
 PING_INTERVAL = 5.0
 BLOCK_SIZE = 32
-DEFAULT_QUALITY = 75
-MIN_QUALITY = 50
-MAX_QUALITY = 85
+DEFAULT_QUALITY = 92
+MIN_QUALITY = 75
+MAX_QUALITY = 95
 LATENCY_HIGH_MS = 200
 LATENCY_LOW_MS = 100
 FRAME_MAGIC = 0xFD
@@ -59,26 +59,117 @@ KEY_MAP = {
 }
 
 
+def _mac_display_scale() -> float:
+    if sys.platform != 'darwin':
+        return 1.0
+    try:
+        import ctypes
+        import ctypes.util
+
+        lib_path = ctypes.util.find_library('CoreGraphics')
+        if not lib_path:
+            return 1.0
+        cg = ctypes.CDLL(lib_path)
+        cg.CGMainDisplayID.restype = ctypes.c_uint32
+        cg.CGDisplayCopyDisplayMode.argtypes = [ctypes.c_uint32]
+        cg.CGDisplayCopyDisplayMode.restype = ctypes.c_void_p
+        cg.CGDisplayModeGetWidth.argtypes = [ctypes.c_void_p]
+        cg.CGDisplayModeGetWidth.restype = ctypes.c_size_t
+        cg.CGDisplayModeGetPixelWidth.argtypes = [ctypes.c_void_p]
+        cg.CGDisplayModeGetPixelWidth.restype = ctypes.c_size_t
+        cg.CGDisplayModeRelease.argtypes = [ctypes.c_void_p]
+
+        display_id = cg.CGMainDisplayID()
+        mode = cg.CGDisplayCopyDisplayMode(display_id)
+        if not mode:
+            return 1.0
+        try:
+            logical_w = cg.CGDisplayModeGetWidth(mode)
+            pixel_w = cg.CGDisplayModeGetPixelWidth(mode)
+            if logical_w <= 0:
+                return 1.0
+            return max(1.0, pixel_w / logical_w)
+        finally:
+            cg.CGDisplayModeRelease(mode)
+    except Exception:
+        return 1.0
+
+
 class ScreenCapture:
     def __init__(self) -> None:
         self.sct = mss()
-        self.monitor = self.sct.monitors[1]
+        self.monitor = dict(self.sct.monitors[1])
+        self.capture_width = self.monitor['width']
+        self.capture_height = self.monitor['height']
+        self._configure_native_resolution()
         self.prev_hash: str | None = None
         self.prev_image: Image.Image | None = None
         self.last_full_frame = 0.0
         self.quality = DEFAULT_QUALITY
         self.latency_ms = 0.0
 
+    def _configure_native_resolution(self) -> None:
+        scale = _mac_display_scale()
+        if scale <= 1.0:
+            return
+
+        expected_w = int(round(self.monitor['width'] * scale))
+        expected_h = int(round(self.monitor['height'] * scale))
+        try:
+            shot = self.sct.grab(self.monitor)
+        except Exception:
+            return
+
+        if shot.width >= expected_w * 0.9 and shot.height >= expected_h * 0.9:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
+            log.info(
+                'Using native capture resolution %dx%d (scale %.1fx)',
+                shot.width,
+                shot.height,
+                scale,
+            )
+            return
+
+        native_monitor = {
+            'left': self.monitor['left'],
+            'top': self.monitor['top'],
+            'width': expected_w,
+            'height': expected_h,
+        }
+        try:
+            native_shot = self.sct.grab(native_monitor)
+        except Exception:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
+            return
+
+        if native_shot.width >= shot.width and native_shot.height >= shot.height:
+            self.monitor = native_monitor
+            self.capture_width = native_shot.width
+            self.capture_height = native_shot.height
+            log.info(
+                'Configured native capture resolution %dx%d (scale %.1fx)',
+                native_shot.width,
+                native_shot.height,
+                scale,
+            )
+        else:
+            self.capture_width = shot.width
+            self.capture_height = shot.height
+
     @property
     def width(self) -> int:
-        return self.monitor['width']
+        return self.capture_width
 
     @property
     def height(self) -> int:
-        return self.monitor['height']
+        return self.capture_height
 
     def capture_raw(self) -> Image.Image:
         shot = self.sct.grab(self.monitor)
+        self.capture_width = shot.width
+        self.capture_height = shot.height
         return Image.frombytes('RGB', shot.size, shot.bgra, 'raw', 'BGRX')
 
     def frame_hash(self, img: Image.Image) -> str:
