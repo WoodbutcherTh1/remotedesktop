@@ -3,8 +3,9 @@
 import { useCallback, useRef } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
 
+const TAP_THRESHOLD_PX = 5;
+
 interface TouchHandlerProps {
-  canvasRef: React.RefObject<HTMLCanvasElement | null>;
   settings: RemoteSettings;
   mapCoords: (clientX: number, clientY: number) => { x: number; y: number } | null;
   sendCommand: (action: string, params?: Record<string, unknown>) => boolean;
@@ -13,7 +14,6 @@ interface TouchHandlerProps {
 }
 
 export default function TouchHandler({
-  canvasRef,
   settings,
   mapCoords,
   sendCommand,
@@ -22,24 +22,33 @@ export default function TouchHandler({
 }: TouchHandlerProps) {
   const lastTapRef = useRef(0);
   const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isDragging = useRef(false);
+  const longPressFiredRef = useRef(false);
   const lastPinchDist = useRef(0);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const lastCoordsRef = useRef<{ x: number; y: number } | null>(null);
 
   const getPointerCoords = useCallback(
     (clientX: number, clientY: number) => mapCoords(clientX, clientY),
     [mapCoords],
   );
 
+  const clearLongPressTimer = useCallback(() => {
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }, []);
+
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
-      if (e.pointerType !== 'touch') return;
-
-      if (e.pointerType === 'touch' && e.isPrimary === false) {
-        return;
-      }
+      if (e.pointerType !== 'touch' || e.isPrimary === false) return;
 
       const coords = getPointerCoords(e.clientX, e.clientY);
       if (!coords) return;
+
+      touchStartRef.current = { x: e.clientX, y: e.clientY };
+      lastCoordsRef.current = coords;
+      longPressFiredRef.current = false;
 
       const now = Date.now();
       const doubleClickSpeed = settings.mouse.doubleClickSpeed;
@@ -48,21 +57,20 @@ export default function TouchHandler({
         sendCommand('mouse_move', coords);
         sendCommand('mouse_double_click', { button: 'left' });
         lastTapRef.current = 0;
+        touchStartRef.current = null;
         return;
       }
       lastTapRef.current = now;
 
       longPressTimer.current = setTimeout(() => {
-        sendCommand('mouse_move', coords);
+        longPressTimer.current = null;
+        longPressFiredRef.current = true;
+        const pos = lastCoordsRef.current;
+        if (!pos) return;
+        sendCommand('mouse_move', pos);
         sendCommand('mouse_click', { button: 'right', pressed: true });
         sendCommand('mouse_click', { button: 'right', pressed: false });
       }, settings.mouse.rightClickLongPress);
-
-      if (settings.mouse.dragEnabled) {
-        isDragging.current = true;
-        sendCommand('mouse_move', coords);
-        sendCommand('mouse_click', { button: 'left', pressed: true });
-      }
     },
     [getPointerCoords, sendCommand, settings],
   );
@@ -71,50 +79,46 @@ export default function TouchHandler({
     (e: React.PointerEvent) => {
       if (e.pointerType !== 'touch') return;
 
-      if (longPressTimer.current) {
-        clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
-      }
+      clearLongPressTimer();
 
       const coords = getPointerCoords(e.clientX, e.clientY);
       if (!coords) return;
+      lastCoordsRef.current = coords;
 
-      if (isDragging.current && settings.mouse.dragEnabled) {
-        sendCommand('mouse_drag', coords);
-      } else {
-        sendCommand('mouse_move', coords);
-      }
+      sendCommand('mouse_move', coords);
     },
-    [getPointerCoords, sendCommand, settings],
+    [clearLongPressTimer, getPointerCoords, sendCommand],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
       if (e.pointerType !== 'touch') return;
 
-      if (longPressTimer.current) {
-        clearTimeout(longPressTimer.current);
-        longPressTimer.current = null;
+      clearLongPressTimer();
 
-        const canvas = canvasRef.current;
-        if (canvas) {
-          const rect = canvas.getBoundingClientRect();
-          const coords = mapCoords(rect.left + rect.width / 2, rect.top + rect.height / 2);
-          if (coords) {
-            sendCommand('mouse_move', coords);
-            sendCommand('mouse_click', { button: 'left', pressed: true });
-            sendCommand('mouse_click', { button: 'left', pressed: false });
-          }
-        }
+      if (longPressFiredRef.current) {
+        longPressFiredRef.current = false;
+        touchStartRef.current = null;
+        lastPinchDist.current = 0;
+        return;
       }
 
-      if (isDragging.current) {
-        sendCommand('mouse_click', { button: 'left', pressed: false });
-        isDragging.current = false;
-      }
+      const start = touchStartRef.current;
+      const coords = getPointerCoords(e.clientX, e.clientY);
+      touchStartRef.current = null;
       lastPinchDist.current = 0;
+
+      if (!start || !coords) return;
+
+      const dx = e.clientX - start.x;
+      const dy = e.clientY - start.y;
+      if (Math.hypot(dx, dy) < TAP_THRESHOLD_PX) {
+        sendCommand('mouse_move', coords);
+        sendCommand('mouse_click', { button: 'left', pressed: true, x: coords.x, y: coords.y });
+        sendCommand('mouse_click', { button: 'left', pressed: false });
+      }
     },
-    [canvasRef, mapCoords, sendCommand],
+    [clearLongPressTimer, getPointerCoords, sendCommand],
   );
 
   const handleTouchStart = useCallback(

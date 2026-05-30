@@ -21,7 +21,6 @@ export function useMouseHandler({
   scaleMode,
 }: UseMouseHandlerOptions) {
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
-  const isDraggingRef = useRef(false);
   const relativePosRef = useRef({ x: 0, y: 0 });
 
   const mapCoords = useCallback(
@@ -60,6 +59,8 @@ export function useMouseHandler({
 
   const handlePointerMove = useCallback(
     (e: React.PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+
       const { mouse } = settings;
       if (mouse.mode === 'relative') {
         relativePosRef.current.x += e.movementX;
@@ -74,18 +75,15 @@ export function useMouseHandler({
       const coords = mapCoords(e.clientX, e.clientY);
       if (!coords) return;
       if (mouse.showRemoteCursor) setCursorPos(coords);
-
-      if (isDraggingRef.current && mouse.dragEnabled) {
-        sendCommand('mouse_drag', coords);
-      } else {
-        sendCommand('mouse_move', coords);
-      }
+      sendCommand('mouse_move', coords);
     },
     [settings, mapCoords, sendCommand, remoteWidth, remoteHeight],
   );
 
   const handlePointerDown = useCallback(
     (e: React.PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+
       const coords = mapCoords(e.clientX, e.clientY);
       if (!coords) return;
 
@@ -103,16 +101,14 @@ export function useMouseHandler({
         x: coords.x,
         y: coords.y,
       });
-
-      if (settings.mouse.dragEnabled) {
-        isDraggingRef.current = true;
-      }
     },
     [mapCoords, sendCommand, settings],
   );
 
   const handlePointerUp = useCallback(
     (e: React.PointerEvent) => {
+      if (e.pointerType === 'touch') return;
+
       const isRight =
         e.button === 2 ||
         (settings.mouse.ctrlClickAsRightClick && (e.ctrlKey || e.metaKey));
@@ -120,7 +116,6 @@ export function useMouseHandler({
         button: isRight ? 'right' : 'left',
         pressed: false,
       });
-      isDraggingRef.current = false;
     },
     [sendCommand, settings],
   );

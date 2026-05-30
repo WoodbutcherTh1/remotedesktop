@@ -83,7 +83,7 @@ export default function RemoteCanvas({
       >
         <canvas
           ref={canvasRef as React.RefObject<HTMLCanvasElement>}
-          className="remote-canvas block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08]"
+          className="remote-canvas block w-full h-full object-contain bg-black border-0 md:border md:border-white/[0.08] pointer-events-none md:pointer-events-auto"
           style={{
             cursor: settings.mouse.showLocalCursor
               ? cursorStyleMap[settings.mouse.cursorStyle]
@@ -127,7 +127,6 @@ export default function RemoteCanvas({
       )}
 
       <TouchHandler
-        canvasRef={canvasRef}
         settings={settings}
         mapCoords={mapCoords}
         sendCommand={sendCommand}
