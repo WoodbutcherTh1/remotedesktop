@@ -1,0 +1,79 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0a0f;
+  --surface: #13131a;
+  --primary-start: #7c3aed;
+  --primary-end: #4f46e5;
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--background);
+  color: #e4e4e7;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.glass {
+  background: rgba(19, 19, 26, 0.72);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.gradient-border {
+  position: relative;
+}
+
+.gradient-border::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(135deg, #7c3aed, #4f46e5, #7c3aed);
+  background-size: 200% 200%;
+  animation: gradient-border 3s ease infinite;
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+@keyframes gradient-border {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+input[type='range'] {
+  accent-color: #7c3aed;
+}
+
+input[type='checkbox'] {
+  accent-color: #7c3aed;
+}
+
+select {
+  background-color: #1a1a24;
+  color: #e4e4e7;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.settings-tab-active {
+  color: #a78bfa;
+  border-bottom: 2px solid #7c3aed;
+}

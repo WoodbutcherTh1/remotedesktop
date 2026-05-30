@@ -1,0 +1,215 @@
+'use client';
+
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import RemoteCanvas from '@/components/RemoteCanvas';
+import TopBar from '@/components/TopBar';
+import SettingsPanel from '@/components/SettingsPanel';
+import KeyboardShortcutBar from '@/components/KeyboardShortcutBar';
+import MobileToolbar from '@/components/MobileToolbar';
+import ReconnectOverlay from '@/components/ReconnectOverlay';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import { useFrameRenderer } from '@/hooks/useFrameRenderer';
+import { useKeyboardHandler } from '@/hooks/useKeyboardHandler';
+import { useSettings } from '@/hooks/useSettings';
+import { DEFAULT_RELAY_URL, FrameMessage, STORAGE_KEYS } from '@/lib/constants';
+import { ScaleMode } from '@/lib/settings-store';
+
+export default function DesktopPage() {
+  const router = useRouter();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mobileSettings, setMobileSettings] = useState(false);
+  const [showMobileKeyboard, setShowMobileKeyboard] = useState(false);
+  const [token, setToken] = useState('');
+  const [relayUrl, setRelayUrl] = useState(DEFAULT_RELAY_URL);
+  const [remoteSize, setRemoteSize] = useState({ width: 0, height: 0 });
+  const sessionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const { settings, loaded, updateSection } = useSettings();
+
+  useEffect(() => {
+    const storedToken = localStorage.getItem(STORAGE_KEYS.TOKEN);
+    const storedRelay = localStorage.getItem(STORAGE_KEYS.RELAY_URL);
+    if (!storedToken) {
+      router.replace('/');
+      return;
+    }
+    setToken(storedToken);
+    setRelayUrl(storedRelay || DEFAULT_RELAY_URL);
+  }, [router]);
+
+  const queueFrameRef = useRef<(f: FrameMessage) => void>(() => {});
+
+  const { status, latency, agentOnline, connect, disconnect, sendCommand, reconnectAttempt } =
+    useWebSocket({
+      url: relayUrl,
+      token,
+      autoReconnect: settings.advanced.autoReconnect,
+      maxReconnectAttempts: settings.advanced.reconnectAttempts,
+      onMessage: (msg) => {
+        if (msg.type === 'frame') {
+          const frame = msg as FrameMessage;
+          setRemoteSize({ width: frame.width, height: frame.height });
+          queueFrameRef.current(frame);
+        }
+      },
+    });
+
+  const { fps, dimensions, queueFrame, takeScreenshot } = useFrameRenderer(canvasRef, settings);
+  queueFrameRef.current = queueFrame;
+
+  const { sendKeyCombo } = useKeyboardHandler({
+    settings,
+    sendCommand,
+    enabled: status === 'connected',
+  });
+
+  useEffect(() => {
+    if (token && relayUrl && loaded) {
+      connect();
+    }
+    return () => disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, relayUrl, loaded]);
+
+  useEffect(() => {
+    if (!settings.advanced.clipboardSync) return;
+
+    const handlePaste = (e: ClipboardEvent) => {
+      const text = e.clipboardData?.getData('text');
+      if (text) sendCommand('type_text', { text, mode: settings.keyboard.mode });
+    };
+
+    const syncClipboard = async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (text) sendCommand('type_text', { text, mode: settings.keyboard.mode });
+      } catch {
+        // permission denied
+      }
+    };
+
+    document.addEventListener('paste', handlePaste);
+    const interval = setInterval(syncClipboard, 3000);
+    return () => {
+      document.removeEventListener('paste', handlePaste);
+      clearInterval(interval);
+    };
+  }, [settings.advanced.clipboardSync, settings.keyboard.mode, sendCommand]);
+
+  useEffect(() => {
+    if (sessionTimerRef.current) clearTimeout(sessionTimerRef.current);
+    const timeout = settings.advanced.sessionTimeout;
+    if (timeout > 0 && status === 'connected') {
+      sessionTimerRef.current = setTimeout(
+        () => {
+          disconnect();
+          router.push('/');
+        },
+        timeout * 60 * 1000,
+      );
+    }
+    return () => {
+      if (sessionTimerRef.current) clearTimeout(sessionTimerRef.current);
+    };
+  }, [settings.advanced.sessionTimeout, status, disconnect, router]);
+
+  const cycleScaleMode = useCallback(() => {
+    const modes: ScaleMode[] = ['fit', 'original', 'stretch'];
+    const idx = modes.indexOf(settings.display.scaleMode);
+    updateSection('display', { scaleMode: modes[(idx + 1) % modes.length] });
+  }, [settings.display.scaleMode, updateSection]);
+
+  const handleFullscreen = useCallback(() => {
+    if (!document.fullscreenElement) {
+      containerRef.current?.requestFullscreen();
+    } else {
+      document.exitFullscreen();
+    }
+  }, []);
+
+  const handleDisconnect = useCallback(() => {
+    disconnect();
+    localStorage.removeItem(STORAGE_KEYS.TOKEN);
+    router.push('/');
+  }, [disconnect, router]);
+
+  const width = remoteSize.width || dimensions.width;
+  const height = remoteSize.height || dimensions.height;
+
+  if (!loaded || !token) {
+    return (
+      <div className="h-screen bg-background flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  return (
+    <div ref={containerRef} className="h-screen flex flex-col bg-background overflow-hidden">
+      <div className="hidden md:block">
+        <TopBar
+          status={status}
+          latency={latency}
+          fps={fps}
+          agentOnline={agentOnline}
+          onFullscreen={handleFullscreen}
+          onFitToggle={cycleScaleMode}
+          scaleMode={settings.display.scaleMode}
+          onScreenshot={takeScreenshot}
+          onCtrlAltDel={() => sendCommand('ctrl_alt_del')}
+          onLockScreen={() => sendCommand('lock_screen')}
+          onSettings={() => setSettingsOpen(true)}
+          onDisconnect={handleDisconnect}
+        />
+      </div>
+
+      {(settings.keyboard.showSpecialKeysToolbar || showMobileKeyboard) && (
+        <div className={`${showMobileKeyboard ? 'block' : 'hidden md:block'} border-b border-white/5`}>
+          <KeyboardShortcutBar onShortcut={sendKeyCombo} visible />
+        </div>
+      )}
+
+      <RemoteCanvas
+        canvasRef={canvasRef}
+        settings={settings}
+        remoteWidth={width}
+        remoteHeight={height}
+        sendCommand={sendCommand}
+        showStats={settings.display.showStatsOverlay}
+        fps={fps}
+        latency={latency}
+      />
+
+      <MobileToolbar
+        onKeyboard={() => setShowMobileKeyboard((v) => !v)}
+        onSettings={() => setMobileSettings(true)}
+        onCtrlAltDel={() => sendCommand('ctrl_alt_del')}
+        onDisconnect={handleDisconnect}
+      />
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        settings={settings}
+        onUpdate={updateSection}
+      />
+
+      <SettingsPanel
+        open={mobileSettings}
+        onClose={() => setMobileSettings(false)}
+        settings={settings}
+        onUpdate={updateSection}
+        mobile
+      />
+
+      <ReconnectOverlay
+        visible={status === 'reconnecting'}
+        attempt={reconnectAttempt}
+        maxAttempts={settings.advanced.reconnectAttempts}
+      />
+    </div>
+  );
+}

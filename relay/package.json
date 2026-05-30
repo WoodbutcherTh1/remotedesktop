@@ -1,0 +1,16 @@
+{
+  "name": "remotedesk-relay",
+  "version": "1.0.0",
+  "description": "WebSocket relay for RemoteDesk",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "ws": "^8.16.0"
+  }
+}
