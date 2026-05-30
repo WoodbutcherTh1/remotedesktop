@@ -21,7 +21,6 @@ import { ViewState } from '@/lib/view-transform';
 export default function DesktopPage() {
   const router = useRouter();
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const viewStateRef = useRef<ViewState>({
     scale: 1,
@@ -29,6 +28,7 @@ export default function DesktopPage() {
     offsetY: 0,
     containerWidth: 0,
     containerHeight: 0,
+    scaleMode: 'fill',
   });
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mobileSettings, setMobileSettings] = useState(false);
@@ -90,9 +90,10 @@ export default function DesktopPage() {
         offsetY: 0,
         containerWidth: viewStateRef.current.containerWidth,
         containerHeight: viewStateRef.current.containerHeight,
+        scaleMode: settings.display.scaleMode,
       };
     }
-  }, [status]);
+  }, [status, settings.display.scaleMode]);
 
   useEffect(() => {
     if (!settings.advanced.clipboardSync) return;
@@ -137,7 +138,7 @@ export default function DesktopPage() {
   }, [settings.advanced.sessionTimeout, status, disconnect, router]);
 
   const cycleScaleMode = useCallback(() => {
-    const modes: ScaleMode[] = ['fit', 'original', 'stretch'];
+    const modes: ScaleMode[] = ['fill', 'fit', 'original', 'stretch'];
     const idx = modes.indexOf(settings.display.scaleMode);
     updateSection('display', { scaleMode: modes[(idx + 1) % modes.length] });
   }, [settings.display.scaleMode, updateSection]);
@@ -168,13 +169,9 @@ export default function DesktopPage() {
   }
 
   return (
-    <div
-      ref={containerRef}
-      className="fixed top-0 left-0 m-0 p-0 w-[100vw] h-[100dvh] overflow-hidden bg-[#0A0A0F]"
-    >
+    <div ref={containerRef} className="fixed inset-0 m-0 p-0 overflow-hidden bg-[#0A0A0F]">
       <RemoteCanvas
         canvasRef={canvasRef}
-        containerRef={canvasContainerRef}
         viewStateRef={viewStateRef}
         settings={settings}
         remoteWidth={width}

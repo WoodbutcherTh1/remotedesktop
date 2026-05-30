@@ -59,7 +59,13 @@ export default function TopBar({
       <div className="flex-1 flex items-center justify-center gap-1">
         <ToolbarButton onClick={onFullscreen} title="Fullscreen">⛶</ToolbarButton>
         <ToolbarButton onClick={onFitToggle} title="Scale mode">
-          {scaleMode === 'fit' ? 'Fit' : scaleMode === 'original' ? '1:1' : 'Stretch'}
+          {scaleMode === 'fill'
+            ? 'Fill'
+            : scaleMode === 'fit'
+              ? 'Fit'
+              : scaleMode === 'original'
+                ? '1:1'
+                : 'Stretch'}
         </ToolbarButton>
         <ToolbarButton onClick={onScreenshot} title="Screenshot">📷</ToolbarButton>
         <ToolbarButton onClick={onCtrlAltDel} title="Ctrl+Alt+Del">⌨</ToolbarButton>

@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from 'react';
 import { RemoteSettings } from '@/lib/settings-store';
+import { ScaleMode } from '@/lib/settings-store';
 import { mapClientToRemote, ViewTransform } from '@/lib/view-transform';
 
 interface UseMouseHandlerOptions {
@@ -11,6 +12,7 @@ interface UseMouseHandlerOptions {
   remoteHeight: number;
   sendCommand: (action: string, params?: Record<string, unknown>) => boolean;
   viewTransform: ViewTransform;
+  scaleMode: ScaleMode;
 }
 
 export function useMouseHandler({
@@ -20,6 +22,7 @@ export function useMouseHandler({
   remoteHeight,
   sendCommand,
   viewTransform,
+  scaleMode,
 }: UseMouseHandlerOptions) {
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
   const relativePosRef = useRef({ x: 0, y: 0 });
@@ -36,9 +39,10 @@ export function useMouseHandler({
         remoteWidth,
         remoteHeight,
         viewTransform,
+        scaleMode,
       );
     },
-    [canvasRef, remoteWidth, remoteHeight, viewTransform],
+    [canvasRef, remoteWidth, remoteHeight, viewTransform, scaleMode],
   );
 
   const handlePointerMove = useCallback(

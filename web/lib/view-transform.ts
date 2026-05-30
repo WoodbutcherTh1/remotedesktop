@@ -1,3 +1,5 @@
+import { ScaleMode } from './settings-store';
+
 export const MIN_VIEW_SCALE = 0.5;
 export const MAX_VIEW_SCALE = 4.0;
 export const VIEW_BACKGROUND = '#0A0A0F';
@@ -13,14 +15,15 @@ export interface ViewTransform {
 export interface ViewState extends ViewTransform {
   containerWidth: number;
   containerHeight: number;
+  scaleMode: ScaleMode;
 }
 
-export interface FitDestRect {
+export interface DestRect {
   destX: number;
   destY: number;
   destW: number;
   destH: number;
-  fitScale: number;
+  baseScale: number;
   totalScale: number;
 }
 
@@ -29,16 +32,16 @@ export function getVisualViewportCssSize(): { width: number; height: number } {
   if (typeof window === 'undefined') {
     return { width: 0, height: 0 };
   }
-  const vv = window.visualViewport;
-  const width = Math.floor(vv?.width ?? window.innerWidth);
-  const height = Math.floor(vv?.height ?? window.innerHeight);
+  const vw = window.visualViewport?.width ?? window.innerWidth;
+  const vh = window.visualViewport?.height ?? window.innerHeight;
   return {
-    width: Math.max(1, width),
-    height: Math.max(1, height),
+    width: vw,
+    height: vh,
   };
 }
 
-export function computeFitScale(
+export function computeBaseScale(
+  scaleMode: ScaleMode,
   remoteWidth: number,
   remoteHeight: number,
   viewportWidth: number,
@@ -47,9 +50,71 @@ export function computeFitScale(
   if (remoteWidth <= 0 || remoteHeight <= 0 || viewportWidth <= 0 || viewportHeight <= 0) {
     return 1;
   }
-  return Math.min(viewportWidth / remoteWidth, viewportHeight / remoteHeight);
+
+  switch (scaleMode) {
+    case 'fill':
+      return Math.max(viewportWidth / remoteWidth, viewportHeight / remoteHeight);
+    case 'fit':
+      return Math.min(viewportWidth / remoteWidth, viewportHeight / remoteHeight);
+    case 'original':
+      return 1;
+    case 'stretch':
+      return 1;
+    default:
+      return Math.max(viewportWidth / remoteWidth, viewportHeight / remoteHeight);
+  }
 }
 
+export function computeDestRect(
+  remoteWidth: number,
+  remoteHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+  scaleMode: ScaleMode,
+  userScale: number,
+  offsetX: number,
+  offsetY: number,
+): DestRect {
+  if (scaleMode === 'stretch') {
+    const destW = viewportWidth * userScale;
+    const destH = viewportHeight * userScale;
+    return {
+      destX: (viewportWidth - destW) / 2 + offsetX,
+      destY: (viewportHeight - destH) / 2 + offsetY,
+      destW,
+      destH,
+      baseScale: 1,
+      totalScale: userScale,
+    };
+  }
+
+  const baseScale = computeBaseScale(
+    scaleMode,
+    remoteWidth,
+    remoteHeight,
+    viewportWidth,
+    viewportHeight,
+  );
+  const totalScale = baseScale * userScale;
+  const destW = remoteWidth * totalScale;
+  const destH = remoteHeight * totalScale;
+  const destX = (viewportWidth - destW) / 2 + offsetX;
+  const destY = (viewportHeight - destH) / 2 + offsetY;
+
+  return { destX, destY, destW, destH, baseScale, totalScale };
+}
+
+/** @deprecated Use computeDestRect */
+export function computeFitScale(
+  remoteWidth: number,
+  remoteHeight: number,
+  viewportWidth: number,
+  viewportHeight: number,
+): number {
+  return computeBaseScale('fit', remoteWidth, remoteHeight, viewportWidth, viewportHeight);
+}
+
+/** @deprecated Use computeDestRect */
 export function computeFitDestRect(
   remoteWidth: number,
   remoteHeight: number,
@@ -58,15 +123,17 @@ export function computeFitDestRect(
   userScale: number,
   offsetX: number,
   offsetY: number,
-): FitDestRect {
-  const fitScale = computeFitScale(remoteWidth, remoteHeight, viewportWidth, viewportHeight);
-  const totalScale = fitScale * userScale;
-  const destW = remoteWidth * totalScale;
-  const destH = remoteHeight * totalScale;
-  const destX = (viewportWidth - destW) / 2 + offsetX;
-  const destY = (viewportHeight - destH) / 2 + offsetY;
-
-  return { destX, destY, destW, destH, fitScale, totalScale };
+): DestRect {
+  return computeDestRect(
+    remoteWidth,
+    remoteHeight,
+    viewportWidth,
+    viewportHeight,
+    'fit',
+    userScale,
+    offsetX,
+    offsetY,
+  );
 }
 
 export function clampViewOffset(
@@ -77,9 +144,9 @@ export function clampViewOffset(
   containerHeight: number,
   remoteWidth: number,
   remoteHeight: number,
+  scaleMode: ScaleMode,
 ): { offsetX: number; offsetY: number } {
   if (
-    userScale <= 1 ||
     containerWidth <= 0 ||
     containerHeight <= 0 ||
     remoteWidth <= 0 ||
@@ -88,15 +155,20 @@ export function clampViewOffset(
     return { offsetX: 0, offsetY: 0 };
   }
 
-  const { destW, destH } = computeFitDestRect(
+  const { destW, destH } = computeDestRect(
     remoteWidth,
     remoteHeight,
     containerWidth,
     containerHeight,
+    scaleMode,
     userScale,
     0,
     0,
   );
+
+  if (userScale <= 1 && scaleMode === 'fit') {
+    return { offsetX: 0, offsetY: 0 };
+  }
 
   const maxX = Math.max(0, (destW - containerWidth) / 2);
   const maxY = Math.max(0, (destH - containerHeight) / 2);
@@ -122,16 +194,18 @@ export function mapClientToRemote(
   remoteWidth: number,
   remoteHeight: number,
   viewTransform: ViewTransform,
+  scaleMode: ScaleMode,
 ): { x: number; y: number } | null {
   if (remoteWidth <= 0 || remoteHeight <= 0) return null;
 
   const localX = clientX - canvasRect.left;
   const localY = clientY - canvasRect.top;
-  const { destX, destY, destW, destH, totalScale } = computeFitDestRect(
+  const { destX, destY, destW, destH, totalScale } = computeDestRect(
     remoteWidth,
     remoteHeight,
     canvasRect.width,
     canvasRect.height,
+    scaleMode,
     viewTransform.scale,
     viewTransform.offsetX,
     viewTransform.offsetY,
@@ -156,12 +230,14 @@ export function mapRemoteToClient(
   viewportWidth: number,
   viewportHeight: number,
   viewTransform: ViewTransform,
+  scaleMode: ScaleMode,
 ): { x: number; y: number } {
-  const { destX, destY, destW, destH } = computeFitDestRect(
+  const { destX, destY, destW, destH } = computeDestRect(
     remoteWidth,
     remoteHeight,
     viewportWidth,
     viewportHeight,
+    scaleMode,
     viewTransform.scale,
     viewTransform.offsetX,
     viewTransform.offsetY,

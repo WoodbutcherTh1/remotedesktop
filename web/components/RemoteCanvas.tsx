@@ -20,7 +20,6 @@ function latencyColorClass(latency: number): string {
 
 interface RemoteCanvasProps {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  containerRef: React.RefObject<HTMLDivElement>;
   viewStateRef: React.MutableRefObject<ViewState>;
   settings: RemoteSettings;
   remoteWidth: number;
@@ -37,7 +36,6 @@ interface RemoteCanvasProps {
 
 export default function RemoteCanvas({
   canvasRef,
-  containerRef,
   viewStateRef,
   settings,
   remoteWidth,
@@ -57,6 +55,7 @@ export default function RemoteCanvas({
     offsetY: 0,
   });
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const scaleMode = settings.display.scaleMode;
 
   useEffect(() => {
     onCanvasMount?.();
@@ -90,14 +89,19 @@ export default function RemoteCanvas({
       ...viewTransform,
       containerWidth: containerSize.width,
       containerHeight: containerSize.height,
+      scaleMode,
     };
-  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height]);
+  }, [viewStateRef, viewTransform, containerSize.width, containerSize.height, scaleMode]);
 
   useEffect(() => {
-    if (viewTransform.scale <= 1 && (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)) {
+    if (
+      scaleMode === 'fit' &&
+      viewTransform.scale <= 1 &&
+      (viewTransform.offsetX !== 0 || viewTransform.offsetY !== 0)
+    ) {
       setViewTransform((prev) => ({ ...prev, offsetX: 0, offsetY: 0 }));
     }
-  }, [viewTransform.scale, viewTransform.offsetX, viewTransform.offsetY]);
+  }, [scaleMode, viewTransform.scale, viewTransform.offsetX, viewTransform.offsetY]);
 
   const handleViewTransformChange = useCallback(
     (next: ViewTransform) => {
@@ -109,10 +113,11 @@ export default function RemoteCanvas({
         containerSize.height,
         remoteWidth,
         remoteHeight,
+        scaleMode,
       );
       setViewTransform({ scale: next.scale, ...clamped });
     },
-    [containerSize.height, containerSize.width, remoteHeight, remoteWidth],
+    [containerSize.height, containerSize.width, remoteHeight, remoteWidth, scaleMode],
   );
 
   const {
@@ -131,6 +136,7 @@ export default function RemoteCanvas({
     remoteHeight,
     sendCommand,
     viewTransform,
+    scaleMode,
   });
 
   const cursorStyleMap: Record<string, string> = {
@@ -151,13 +157,13 @@ export default function RemoteCanvas({
           containerSize.width,
           containerSize.height,
           viewTransform,
+          scaleMode,
         )
       : null;
 
   return (
     <div
       id="viewport"
-      ref={containerRef}
       className="remote-canvas-container"
       style={{
         position: 'fixed',
@@ -175,12 +181,6 @@ export default function RemoteCanvas({
         ref={canvasRef as React.RefObject<HTMLCanvasElement>}
         className="remote-canvas"
         style={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          display: 'block',
-          backgroundColor: '#0A0A0F',
-          imageRendering: 'auto',
           cursor: settings.mouse.showLocalCursor
             ? cursorStyleMap[settings.mouse.cursorStyle]
             : 'none',
@@ -204,7 +204,7 @@ export default function RemoteCanvas({
         >
           {settings.mouse.cursorStyle === 'dot' ? (
             <div
-              className="w-3 h-3 rounded-full border-2 border-white"
+              className="w-3 h-3 rounded-full border-2 border-zinc-200"
               style={{ backgroundColor: settings.mouse.cursorColor }}
             />
           ) : (
@@ -231,6 +231,7 @@ export default function RemoteCanvas({
         containerHeight={containerSize.height}
         remoteWidth={remoteWidth}
         remoteHeight={remoteHeight}
+        scaleMode={scaleMode}
       />
 
       <div className="md:hidden absolute top-2 right-2 z-30 glass rounded px-2 py-1 font-mono text-[10px] pointer-events-none">
@@ -252,6 +253,7 @@ export default function RemoteCanvas({
           <div>Rendered FPS: {fps}</div>
           <div className={latencyColorClass(latency)}>Latency: {latency}ms</div>
           <div>Resolution: {remoteWidth}×{remoteHeight}</div>
+          <div>Scale: {scaleMode}</div>
           <div>Touch: {settings.mouse.touchMode}</div>
           <div>Zoom: {scale.toFixed(2)}x</div>
           <div>Pan: {offsetX.toFixed(0)}, {offsetY.toFixed(0)}</div>

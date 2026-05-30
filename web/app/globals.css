@@ -24,9 +24,11 @@ body,
 
 @media (max-width: 767px) {
   html,
-  body {
+  body,
+  #__next {
     width: 100vw;
     height: 100dvh;
+    min-height: 100dvh;
     overscroll-behavior: none;
   }
 }
@@ -104,14 +106,9 @@ select {
 }
 
 canvas.remote-canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  display: block;
   margin: 0;
   padding: 0;
   border: none;
-  background-color: #0a0a0f;
   image-rendering: auto;
   transition: none !important;
   animation: none !important;

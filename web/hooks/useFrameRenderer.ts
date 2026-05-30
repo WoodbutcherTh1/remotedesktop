@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { BinaryFrame } from '@/lib/frame-protocol';
 import { ColorMode, RemoteSettings } from '@/lib/settings-store';
 import {
-  computeFitDestRect,
+  computeDestRect,
   getVisualViewportCssSize,
   VIEW_BACKGROUND,
   ViewState,
@@ -95,20 +95,23 @@ function applyHighQualitySmoothing(
   ctx.imageSmoothingQuality = 'high';
 }
 
+/** Single source of truth for display canvas CSS + buffer dimensions. */
 function syncDisplayCanvasSize(canvas: HTMLCanvasElement): DisplayViewport {
+  const vw = window.visualViewport?.width ?? window.innerWidth;
+  const vh = window.visualViewport?.height ?? window.innerHeight;
   const dpr = window.devicePixelRatio || 1;
-  const { width: cssW, height: cssH } = getVisualViewportCssSize();
-  const bufferW = Math.floor(cssW * dpr);
-  const bufferH = Math.floor(cssH * dpr);
 
-  if (canvas.width !== bufferW || canvas.height !== bufferH) {
-    canvas.width = bufferW;
-    canvas.height = bufferH;
-  }
-  canvas.style.width = `${cssW}px`;
-  canvas.style.height = `${cssH}px`;
+  canvas.style.width = `${vw}px`;
+  canvas.style.height = `${vh}px`;
+  canvas.style.position = 'absolute';
+  canvas.style.top = '0';
+  canvas.style.left = '0';
+  canvas.style.display = 'block';
+  canvas.style.backgroundColor = VIEW_BACKGROUND;
+  canvas.width = Math.round(vw * dpr);
+  canvas.height = Math.round(vh * dpr);
 
-  return { cssW, cssH, dpr };
+  return { cssW: vw, cssH: vh, dpr };
 }
 
 export function useFrameRenderer(
@@ -157,14 +160,13 @@ export function useFrameRenderer(
 
   const paintDisplayCanvas = useCallback(() => {
     const canvas = canvasRef.current;
-    const offscreen = offscreenRef.current;
-    if (!canvas || !offscreen || offscreen.width === 0 || offscreen.height === 0) return;
+    if (!canvas) return;
 
     const { cssW, cssH, dpr } = syncDisplayCanvasSize(canvas);
     if (cssW <= 0 || cssH <= 0) return;
 
     const ctx = canvas.getContext('2d', {
-      alpha: true,
+      alpha: false,
       desynchronized: settingsRef.current.display.hardwareAcceleration,
     });
     if (!ctx) return;
@@ -175,12 +177,17 @@ export function useFrameRenderer(
       ctx.fillStyle = VIEW_BACKGROUND;
       ctx.fillRect(0, 0, cssW, cssH);
 
+      const offscreen = offscreenRef.current;
+      if (!offscreen || offscreen.width === 0 || offscreen.height === 0) return;
+
       const viewState = viewStateRef.current;
-      const { destX, destY, destW, destH } = computeFitDestRect(
+      const scaleMode = settingsRef.current.display.scaleMode;
+      const { destX, destY, destW, destH } = computeDestRect(
         offscreen.width,
         offscreen.height,
         cssW,
         cssH,
+        scaleMode,
         viewState.scale,
         viewState.offsetX,
         viewState.offsetY,
@@ -346,19 +353,9 @@ export function useFrameRenderer(
     if (displayInitializedRef.current) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const ctx = canvas.getContext('2d', { alpha: true });
-    if (!ctx) return;
-    try {
-      const { cssW, cssH, dpr } = syncDisplayCanvasSize(canvas);
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      applyHighQualitySmoothing(ctx);
-      ctx.fillStyle = VIEW_BACKGROUND;
-      ctx.fillRect(0, 0, cssW, cssH);
-      displayInitializedRef.current = true;
-    } catch {
-      // ignore
-    }
-  }, [canvasRef]);
+    paintDisplayCanvas();
+    displayInitializedRef.current = true;
+  }, [canvasRef, paintDisplayCanvas]);
 
   return {
     fps,

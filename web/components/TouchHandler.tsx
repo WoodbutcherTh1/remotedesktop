@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useRef } from 'react';
-import { RemoteSettings } from '@/lib/settings-store';
+import { RemoteSettings, ScaleMode } from '@/lib/settings-store';
 import {
   clampViewOffset,
   clampViewScale,
@@ -21,6 +21,7 @@ interface TouchHandlerProps {
   containerHeight: number;
   remoteWidth: number;
   remoteHeight: number;
+  scaleMode: ScaleMode;
 }
 
 export default function TouchHandler({
@@ -33,6 +34,7 @@ export default function TouchHandler({
   containerHeight,
   remoteWidth,
   remoteHeight,
+  scaleMode,
 }: TouchHandlerProps) {
   const { scale } = viewTransform;
   const lastTapRef = useRef(0);
@@ -67,8 +69,9 @@ export default function TouchHandler({
         containerHeight,
         remoteWidth,
         remoteHeight,
+        scaleMode,
       ),
-    [containerHeight, containerWidth, remoteHeight, remoteWidth],
+    [containerHeight, containerWidth, remoteHeight, remoteWidth, scaleMode],
   );
 
   const applyPan = useCallback(

@@ -5,7 +5,7 @@ export type CursorStyle = 'default' | 'crosshair' | 'dot' | 'pointer';
 export type MouseMode = 'absolute' | 'relative';
 export type ScrollMethod = 'wheel' | 'smooth' | 'pixel';
 export type KeyboardMode = 'legacy' | 'unicode' | 'map';
-export type ScaleMode = 'fit' | 'original' | 'stretch';
+export type ScaleMode = 'fill' | 'fit' | 'original' | 'stretch';
 export type ColorMode = 'color' | 'grayscale' | 'high-contrast';
 
 export interface RemoteSettings {
@@ -87,7 +87,7 @@ export const DEFAULT_SETTINGS: RemoteSettings = {
     hardwareAcceleration: true,
     colorMode: 'color',
     showStatsOverlay: false,
-    scaleMode: 'fit',
+    scaleMode: 'fill',
   },
   advanced: {
     autoReconnect: true,
@@ -125,13 +125,33 @@ function deepMerge<T extends Record<string, unknown>>(target: T, source: Partial
   return result;
 }
 
+function isMobileViewport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.matchMedia('(max-width: 767px)').matches;
+}
+
 export function loadSettings(): RemoteSettings {
   if (typeof window === 'undefined') return DEFAULT_SETTINGS;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return DEFAULT_SETTINGS;
+    if (!raw) {
+      const defaults = { ...DEFAULT_SETTINGS };
+      if (isMobileViewport()) {
+        defaults.display = { ...defaults.display, scaleMode: 'fill' };
+      } else {
+        defaults.display = { ...defaults.display, scaleMode: 'fit' };
+      }
+      return defaults;
+    }
     const parsed = JSON.parse(raw) as Partial<RemoteSettings>;
-    return deepMerge(DEFAULT_SETTINGS as unknown as Record<string, unknown>, parsed as Record<string, unknown>) as unknown as RemoteSettings;
+    const merged = deepMerge(
+      DEFAULT_SETTINGS as unknown as Record<string, unknown>,
+      parsed as Record<string, unknown>,
+    ) as unknown as RemoteSettings;
+    if (!parsed.display?.scaleMode && isMobileViewport()) {
+      merged.display = { ...merged.display, scaleMode: 'fill' };
+    }
+    return merged;
   } catch {
     return DEFAULT_SETTINGS;
   }

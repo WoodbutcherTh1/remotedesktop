@@ -60,6 +60,7 @@ export default function DisplaySettings({ settings, onChange }: DisplaySettingsP
           value={settings.scaleMode}
           onChange={(v) => onChange({ scaleMode: v })}
           options={[
+            { value: 'fill', label: 'Fill screen (crop edges)' },
             { value: 'fit', label: 'Fit to window' },
             { value: 'original', label: 'Original size' },
             { value: 'stretch', label: 'Stretch' },
